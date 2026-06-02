@@ -75,7 +75,7 @@ export default function Header({ activeTab, setActiveTab }: HeaderProps) {
               Fully<span className="gradient-text">CRM</span>
             </h1>
             <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '-2px' }}>
-              Emlak Satış Asistanı
+              Emlak Satış Yöneticisi
             </p>
           </div>
         </div>
