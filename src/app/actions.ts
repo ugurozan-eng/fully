@@ -1,5 +1,15 @@
 'use server';
 
+// Alias STORAGE_ environment variables to POSTGRES_ if custom prefix was used in Vercel
+if (process.env.STORAGE_URL && !process.env.POSTGRES_URL) {
+  process.env.POSTGRES_URL = process.env.STORAGE_URL;
+  process.env.POSTGRES_URL_NON_POOLING = process.env.STORAGE_URL_NON_POOLING;
+  process.env.POSTGRES_USER = process.env.STORAGE_USER;
+  process.env.POSTGRES_HOST = process.env.STORAGE_HOST;
+  process.env.POSTGRES_PASSWORD = process.env.STORAGE_PASSWORD;
+  process.env.POSTGRES_DATABASE = process.env.STORAGE_DATABASE;
+}
+
 import { sql } from '@vercel/postgres';
 import { Lead, Appointment, Property } from '@/lib/types';
 
