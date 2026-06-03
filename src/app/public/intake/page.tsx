@@ -109,7 +109,7 @@ export default function PublicIntake() {
   }
 
   return (
-    <div style={{
+    <div className="main-container" style={{
       minHeight: '100vh',
       display: 'flex',
       flexDirection: 'column',
@@ -130,7 +130,7 @@ export default function PublicIntake() {
         </div>
 
         <form onSubmit={handleSubmit}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
+          <div className="form-columns-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
             {/* Column 1 */}
             <div>
               <div className="form-group">

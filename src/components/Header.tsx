@@ -52,8 +52,8 @@ export default function Header({ activeTab, setActiveTab }: HeaderProps) {
   ];
 
   return (
-    <header className="glass-panel" style={{ borderBottomLeftRadius: '24px', borderBottomRightRadius: '24px', marginBottom: '2rem', padding: '1rem 2rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+    <header className="glass-panel app-header" style={{ borderBottomLeftRadius: '24px', borderBottomRightRadius: '24px', marginBottom: '2rem', padding: '1rem 2rem' }}>
+      <div className="app-header-top" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         {/* Brand Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <div style={{
@@ -81,8 +81,8 @@ export default function Header({ activeTab, setActiveTab }: HeaderProps) {
           </div>
         </div>
 
-        {/* Database Status Badge */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        {/* Database Status Badge & Theme Select */}
+        <div className="app-header-controls" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           {dbStatus.checked ? (
             <div style={{
               display: 'inline-flex',
@@ -149,7 +149,7 @@ export default function Header({ activeTab, setActiveTab }: HeaderProps) {
       </div>
 
       {/* Navigation Tabs */}
-      <nav style={{ 
+      <nav className="mobile-nav-tabs" style={{ 
         display: 'flex', 
         gap: '0.5rem', 
         marginTop: '1.25rem', 

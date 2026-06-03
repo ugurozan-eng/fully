@@ -9,15 +9,16 @@ Bu dosya, projedeki en güncel durumu ve çalışma geçmişini takip etmek içi
 
 ## Mevcut Durum (Current Status)
 * **Tarih:** 2026-06-03
-* **Faz:** Faz 2 - Excel / CSV Veri İçe Aktarma (Import) Modülü (Planlama Aşaması)
-* **Son Durum:** Giriş paneli (Login) talebi kullanıcının kararıyla ertelendi. Mevcut müşteri listelerinin sisteme yüklenebilmesi için Excel (.xlsx, .xls) ve CSV yükleme modülü planlamasına geçildi. Plan kullanıcıya iletildi.
+* **Faz:** Faz 3 - Mobil Uyum ve Optimizasyon (Tamamlandı)
+* **Son Durum:** Mobil uyumluluk planı (yatay kayan menü, 2x2 stats kartı, dikey kolon sıralaması) kullanıcının Seçenek A kararlarına göre başarıyla uygulandı. `npm run build` doğrulaması başarıyla geçildi.
 
 ## Yapılacaklar Listesi (To-Do)
 - [x] Kullanıcıdan gelen soru cevaplarına göre mimariyi netleştirmek.
 - [x] Faz 1: Proje Kurulumu ve Vercel Deploy.
-- [ ] Faz 2: Excel / CSV Veri İçe Aktarma.
-  - [ ] Kullanıcıdan Excel kolon isimlerini ve mükerrer kayıt kurallarını öğrenmek.
-  - [ ] `xlsx` kütüphanesini projeye eklemek.
-  - [ ] Kolon Eşleştirme (Column Mapping) arayüzünü tasarlamak.
-  - [ ] Toplu kayıt ekleme motorunu ve mükerrer kontrolünü yazmak.
-  - [ ] walkthrough.md ve handoff.md güncellemek.
+- [x] Faz 2: Excel / CSV Veri İçe Aktarma.
+- [x] Faz 3: Mobil Uyum ve Optimizasyon.
+  - [x] Kullanıcıdan plan onayını almak.
+  - [x] `globals.css` içinde mobil media query'leri ve buton boyutlarını ayarlamak.
+  - [x] CRM kolonlarının ve stats kartlarının mobil tasarımlarını bitirmek.
+  - [x] Vercel derleme kontrolü yapmak.
+  - [x] walkthrough.md ve handoff.md güncellemek.

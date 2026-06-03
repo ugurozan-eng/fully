@@ -553,7 +553,7 @@ export default function Home() {
   };
 
   return (
-    <div style={{ maxWidth: '1400px', width: '100%', margin: '0 auto', padding: '0 1rem 3rem 1rem' }}>
+    <div className="main-container" style={{ maxWidth: '1400px', width: '100%', margin: '0 auto', padding: '0 1rem 3rem 1rem' }}>
       <Header activeTab={activeTab} setActiveTab={(tab) => {
         if (tab !== 'add-lead') setEditingLead(null);
         setActiveTab(tab);
@@ -568,7 +568,7 @@ export default function Home() {
         <main className="animate-fade-in">
           {/* Quick Stats Banner */}
           {activeTab === 'dashboard' && (
-            <div style={{
+            <div className="stats-grid" style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
               gap: '1.25rem',
@@ -644,7 +644,7 @@ export default function Home() {
               </div>
 
               {/* CRM swimlanes */}
-              <div style={{
+              <div className="crm-columns-grid" style={{
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
                 gap: '1.5rem',
@@ -733,7 +733,7 @@ export default function Home() {
               </div>
 
               <form onSubmit={handleSaveLead}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
+                <div className="form-columns-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
                   {/* Left Column */}
                   <div>
                     <div className="form-group">
@@ -938,7 +938,7 @@ export default function Home() {
 
           {/* TAB CONTENT: APPOINTMENTS */}
           {activeTab === 'appointments' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
+            <div className="appointments-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
               {/* Form Side */}
               <div className="glass-panel" style={{ height: 'fit-content' }}>
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '1.25rem' }}>Yeni Randevu Planla</h3>
@@ -1065,7 +1065,7 @@ export default function Home() {
 
           {/* TAB CONTENT: MATCHMAKER (SMART MATCHING) */}
           {activeTab === 'matchmaker' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
+            <div className="matchmaker-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
               {/* Add Property Form */}
               <div className="glass-panel" style={{ height: 'fit-content' }}>
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '1.25rem' }}>Satışa Çıkan Gayrimenkul Girişi</h3>
@@ -1632,7 +1632,7 @@ export default function Home() {
         </div>
 
         {/* Card Actions */}
-        <div style={{ 
+        <div className="lead-card-actions" style={{ 
           display: 'flex', 
           justifyContent: 'space-between', 
           alignItems: 'center', 
