@@ -22,6 +22,9 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Excel Import States
+  const [excelWorkbook, setExcelWorkbook] = useState<XLSX.WorkBook | null>(null);
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState<string>('');
   const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
   const [excelRows, setExcelRows] = useState<any[][]>([]);
   const [columnMap, setColumnMap] = useState<Record<string, string>>({
@@ -41,6 +44,85 @@ export default function Home() {
   const [importSuccess, setImportSuccess] = useState<boolean>(false);
   const [importCount, setImportCount] = useState<number>(0);
 
+  const parseSheet = (wb: XLSX.WorkBook, sheetName: string) => {
+    try {
+      const ws = wb.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+
+      if (data.length === 0) {
+        alert('Seçilen sayfa boş görünüyor.');
+        return;
+      }
+
+      // Smart header row finder
+      let headerRowIdx = 0;
+      let found = false;
+
+      for (let i = 0; i < Math.min(data.length, 25); i++) {
+        const row = data[i] || [];
+        const hasName = row.some(cell => {
+          const val = String(cell || '').toLowerCase();
+          return val.includes('isim') || val.includes('ad soyad') || val.includes('adısayadı');
+        });
+        const hasPhone = row.some(cell => {
+          const val = String(cell || '').toLowerCase();
+          return val === 'tel' || val.includes('telefon') || val.includes('gsm') || val.includes('telno');
+        });
+
+        if (hasName && hasPhone) {
+          headerRowIdx = i;
+          found = true;
+          break;
+        }
+      }
+
+      // Fallback: If not found, use the first row that has at least 3 non-empty values
+      if (!found) {
+        for (let i = 0; i < Math.min(data.length, 10); i++) {
+          const row = data[i] || [];
+          const nonCount = row.filter(cell => cell !== undefined && String(cell).trim() !== '').length;
+          if (nonCount >= 3) {
+            headerRowIdx = i;
+            break;
+          }
+        }
+      }
+
+      const headers = (data[headerRowIdx] || []).map(h => String(h || '').trim());
+      const rows = data.slice(headerRowIdx + 1);
+
+      setExcelHeaders(headers);
+      setExcelRows(rows);
+      setSelectedSheet(sheetName);
+      setImportSuccess(false);
+
+      // Auto mapping logic
+      const newMap = {
+        name: '', phone: '', source: '', property_type: '', room_count: '',
+        current_location: '', target_region: '', notes: '', warmth_outcome: '',
+        appointment_date: '', budget: '',
+      };
+      
+      headers.forEach((h) => {
+        const lowerH = h.toLowerCase();
+        if (lowerH.includes('isim') || lowerH.includes('ad soyad') || lowerH.includes('adısayadı')) newMap.name = h;
+        else if (lowerH === 'tel' || lowerH.includes('telefon') || lowerH.includes('gsm')) newMap.phone = h;
+        else if (lowerH.includes('kaynak') || lowerH.includes('kanal') || lowerH.includes('kategori')) newMap.source = h;
+        else if (lowerH.includes('daire') || lowerH.includes('emlak tipi') || lowerH.includes('ilgilen')) newMap.room_count = h;
+        else if (lowerH === 'il' || lowerH.includes('şehir') || lowerH.includes('yaşadığı')) newMap.current_location = h;
+        else if (lowerH.includes('bölge') || lowerH.includes('konum')) newMap.target_region = h;
+        else if (lowerH.includes('not') || lowerH.includes('açıklama')) newMap.notes = h;
+        else if (lowerH.includes('sonuç') || lowerH.includes('durum') || lowerH.includes('aksiyon')) newMap.warmth_outcome = h;
+        else if (lowerH.includes('randevu')) newMap.appointment_date = h;
+        else if (lowerH.includes('bütçe') || lowerH.includes('fiyat')) newMap.budget = h;
+      });
+      setColumnMap(newMap);
+    } catch (err) {
+      console.error(err);
+      alert('Sayfa okunurken bir hata oluştu.');
+    }
+  };
+
   const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -51,43 +133,40 @@ export default function Home() {
         const bstr = evt?.target?.result;
         if (!bstr) return;
         const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+        setExcelWorkbook(wb);
+        setSheetNames(wb.SheetNames);
 
-        if (data.length === 0) {
-          alert('Excel dosyası boş görünüyor.');
-          return;
+        // Find the best sheet containing Lead data
+        let bestSheetName = wb.SheetNames[0];
+        for (const name of wb.SheetNames) {
+          const ws = wb.Sheets[name];
+          const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+          
+          let hasName = false;
+          let hasPhone = false;
+          
+          // Check first 15 rows of the sheet
+          for (let i = 0; i < Math.min(data.length, 15); i++) {
+            const row = data[i] || [];
+            const nMatch = row.some(cell => {
+              const val = String(cell || '').toLowerCase();
+              return val.includes('isim') || val.includes('ad soyad') || val.includes('adısayadı');
+            });
+            const pMatch = row.some(cell => {
+              const val = String(cell || '').toLowerCase();
+              return val === 'tel' || val.includes('telefon') || val.includes('gsm');
+            });
+            if (nMatch) hasName = true;
+            if (pMatch) hasPhone = true;
+          }
+
+          if (hasName && hasPhone) {
+            bestSheetName = name;
+            break;
+          }
         }
 
-        const headers = data[0].map(h => String(h || '').trim());
-        const rows = data.slice(1);
-
-        setExcelHeaders(headers);
-        setExcelRows(rows);
-        setImportSuccess(false);
-
-        // Auto mapping logic
-        const newMap = {
-          name: '', phone: '', source: '', property_type: '', room_count: '',
-          current_location: '', target_region: '', notes: '', warmth_outcome: '',
-          appointment_date: '', budget: '',
-        };
-        
-        headers.forEach((h) => {
-          const lowerH = h.toLowerCase();
-          if (lowerH.includes('isim') || lowerH.includes('ad soyad') || lowerH.includes('adısayadı')) newMap.name = h;
-          else if (lowerH === 'tel' || lowerH.includes('telefon') || lowerH.includes('gsm')) newMap.phone = h;
-          else if (lowerH.includes('kaynak') || lowerH.includes('mecra')) newMap.source = h;
-          else if (lowerH.includes('daire') || lowerH.includes('emlak tipi') || lowerH.includes('ilgilen')) newMap.room_count = h;
-          else if (lowerH === 'il' || lowerH.includes('şehir') || lowerH.includes('yaşadığı')) newMap.current_location = h;
-          else if (lowerH.includes('bölge') || lowerH.includes('konum')) newMap.target_region = h;
-          else if (lowerH.includes('not') || lowerH.includes('açıklama')) newMap.notes = h;
-          else if (lowerH.includes('sonuç') || lowerH.includes('durum') || lowerH.includes('aksiyon')) newMap.warmth_outcome = h;
-          else if (lowerH.includes('randevu')) newMap.appointment_date = h;
-          else if (lowerH.includes('bütçe') || lowerH.includes('fiyat')) newMap.budget = h;
-        });
-        setColumnMap(newMap);
+        parseSheet(wb, bestSheetName);
       } catch (err) {
         console.error(err);
         alert('Excel dosyası okunurken hata oluştu. Lütfen dosya formatını kontrol edin.');
@@ -1258,6 +1337,25 @@ export default function Home() {
                       ✓ **{excelRows.length} adet veri satırı algılandı.** Lütfen aşağıdaki CRM alanlarının Excel tablonuzda hangi kolona denk geldiğini eşleştirin.
                     </p>
                   </div>
+
+                  {sheetNames.length > 1 && (
+                    <div className="form-group" style={{ marginBottom: '1.5rem', maxWidth: '300px' }}>
+                      <label style={{ fontWeight: 'bold', color: 'var(--color-primary)' }}>Aktif Sayfa (Sheet)</label>
+                      <select 
+                        className="form-control"
+                        value={selectedSheet}
+                        onChange={(e) => {
+                          if (excelWorkbook) {
+                            parseSheet(excelWorkbook, e.target.value);
+                          }
+                        }}
+                      >
+                        {sheetNames.map(name => (
+                          <option key={name} value={name}>{name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
                     {/* CRM Field Selectors */}
