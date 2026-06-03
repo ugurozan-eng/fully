@@ -8,17 +8,16 @@ Bu dosya, projedeki en güncel durumu ve çalışma geçmişini takip etmek içi
 3. **Süreklilik:** Bu proje 2 ay sonra başka bir geliştiriciye devredilse dahi, en son nerede kalındığı bu dosya aracılığıyla kolayca takip edilebilecektir.
 
 ## Mevcut Durum (Current Status)
-* **Tarih:** 2026-06-02
-* **Faz:** Proje Geliştirme ve Test Fazı Tamamlandı
-* **Son Durum:** Projenin Next.js (App Router) altyapısı, dökümantasyonu, dual-theme Vanilla CSS dosyaları, LocalStorage ve Vercel Postgres entegrasyonu, Randevu, Akıllı Eşleştirme, WhatsApp Raporu ve QR Müşteri Giriş sayfası başarıyla tamamlandı. `npm run build` ile derleme doğrulaması yapıldı.
+* **Tarih:** 2026-06-03
+* **Faz:** Faz 2 - Excel / CSV Veri İçe Aktarma (Import) Modülü (Planlama Aşaması)
+* **Son Durum:** Giriş paneli (Login) talebi kullanıcının kararıyla ertelendi. Mevcut müşteri listelerinin sisteme yüklenebilmesi için Excel (.xlsx, .xls) ve CSV yükleme modülü planlamasına geçildi. Plan kullanıcıya iletildi.
 
 ## Yapılacaklar Listesi (To-Do)
-- [x] Kullanıcıdan gelen soru cevaplarına göre mimariyi netleştirmek ([decisions.md](file:///c:/Claude%20Projects/Fully/docs/decisions.md) ve [architecture.md](file:///c:/Claude%20Projects/Fully/docs/architecture.md) güncellendi).
-- [x] Faz 1: Proje Kurulumu.
-  - [x] `create-next-app` ile projeyi kurmak.
-  - [x] `globals.css` içinde Midnight Neon ve Forest/Teal temalarını CSS variables olarak tasarlamak.
-  - [x] Veritabanı entegrasyon şemasını (Vercel Postgres SQL init script) hazırlamak.
-- [x] Faz 2: Lead Kayıt ve Takip Ekranları.
-- [x] Faz 3: Randevu Modülü ve Takvimi.
-- [x] Faz 4: WhatsApp Patron Raporlama ve QR Kod ile Müşteri Alım Sayfası.
-- [x] Faz 5: Doğrulama ve Vercel Deploy.
+- [x] Kullanıcıdan gelen soru cevaplarına göre mimariyi netleştirmek.
+- [x] Faz 1: Proje Kurulumu ve Vercel Deploy.
+- [ ] Faz 2: Excel / CSV Veri İçe Aktarma.
+  - [ ] Kullanıcıdan Excel kolon isimlerini ve mükerrer kayıt kurallarını öğrenmek.
+  - [ ] `xlsx` kütüphanesini projeye eklemek.
+  - [ ] Kolon Eşleştirme (Column Mapping) arayüzünü tasarlamak.
+  - [ ] Toplu kayıt ekleme motorunu ve mükerrer kontrolünü yazmak.
+  - [ ] walkthrough.md ve handoff.md güncellemek.

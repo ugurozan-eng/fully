@@ -7,9 +7,11 @@ import { Lead, Appointment, Property } from '@/lib/types';
 import { 
   Plus, Phone, Calendar, Trash2, Edit, Check, X, 
   AlertTriangle, AlertCircle, Share2, QrCode, Search, 
-  RefreshCw, Briefcase, MapPin, Heart, DollarSign, MessageCircle 
+  RefreshCw, Briefcase, MapPin, Heart, DollarSign, MessageCircle,
+  CheckCircle2
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import * as XLSX from 'xlsx';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -18,6 +20,195 @@ export default function Home() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Excel Import States
+  const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
+  const [excelRows, setExcelRows] = useState<any[][]>([]);
+  const [columnMap, setColumnMap] = useState<Record<string, string>>({
+    name: '',
+    phone: '',
+    source: '',
+    property_type: '',
+    room_count: '',
+    current_location: '',
+    target_region: '',
+    notes: '',
+    warmth_outcome: '',
+    appointment_date: '',
+    budget: '',
+  });
+  const [importing, setImporting] = useState<boolean>(false);
+  const [importSuccess, setImportSuccess] = useState<boolean>(false);
+  const [importCount, setImportCount] = useState<number>(0);
+
+  const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt?.target?.result;
+        if (!bstr) return;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+
+        if (data.length === 0) {
+          alert('Excel dosyası boş görünüyor.');
+          return;
+        }
+
+        const headers = data[0].map(h => String(h || '').trim());
+        const rows = data.slice(1);
+
+        setExcelHeaders(headers);
+        setExcelRows(rows);
+        setImportSuccess(false);
+
+        // Auto mapping logic
+        const newMap = {
+          name: '', phone: '', source: '', property_type: '', room_count: '',
+          current_location: '', target_region: '', notes: '', warmth_outcome: '',
+          appointment_date: '', budget: '',
+        };
+        
+        headers.forEach((h) => {
+          const lowerH = h.toLowerCase();
+          if (lowerH.includes('isim') || lowerH.includes('ad soyad') || lowerH.includes('adısayadı')) newMap.name = h;
+          else if (lowerH === 'tel' || lowerH.includes('telefon') || lowerH.includes('gsm')) newMap.phone = h;
+          else if (lowerH.includes('kaynak') || lowerH.includes('mecra')) newMap.source = h;
+          else if (lowerH.includes('daire') || lowerH.includes('emlak tipi') || lowerH.includes('ilgilen')) newMap.room_count = h;
+          else if (lowerH === 'il' || lowerH.includes('şehir') || lowerH.includes('yaşadığı')) newMap.current_location = h;
+          else if (lowerH.includes('bölge') || lowerH.includes('konum')) newMap.target_region = h;
+          else if (lowerH.includes('not') || lowerH.includes('açıklama')) newMap.notes = h;
+          else if (lowerH.includes('sonuç') || lowerH.includes('durum') || lowerH.includes('aksiyon')) newMap.warmth_outcome = h;
+          else if (lowerH.includes('randevu')) newMap.appointment_date = h;
+          else if (lowerH.includes('bütçe') || lowerH.includes('fiyat')) newMap.budget = h;
+        });
+        setColumnMap(newMap);
+      } catch (err) {
+        console.error(err);
+        alert('Excel dosyası okunurken hata oluştu. Lütfen dosya formatını kontrol edin.');
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const runImport = async () => {
+    if (!columnMap.name || !columnMap.phone) {
+      alert('Lütfen en azından "Adı Soyadı" ve "Telefon Numarası" kolonlarını eşleştirin.');
+      return;
+    }
+
+    setImporting(true);
+    let imported = 0;
+
+    const nameIdx = excelHeaders.indexOf(columnMap.name);
+    const phoneIdx = excelHeaders.indexOf(columnMap.phone);
+    const sourceIdx = columnMap.source ? excelHeaders.indexOf(columnMap.source) : -1;
+    const roomCountIdx = columnMap.room_count ? excelHeaders.indexOf(columnMap.room_count) : -1;
+    const currentLocationIdx = columnMap.current_location ? excelHeaders.indexOf(columnMap.current_location) : -1;
+    const targetRegionIdx = columnMap.target_region ? excelHeaders.indexOf(columnMap.target_region) : -1;
+    const notesIdx = columnMap.notes ? excelHeaders.indexOf(columnMap.notes) : -1;
+    const warmthIdx = columnMap.warmth_outcome ? excelHeaders.indexOf(columnMap.warmth_outcome) : -1;
+    const appDateIdx = columnMap.appointment_date ? excelHeaders.indexOf(columnMap.appointment_date) : -1;
+    const budgetIdx = columnMap.budget ? excelHeaders.indexOf(columnMap.budget) : -1;
+
+    for (const row of excelRows) {
+      const nameVal = String(row[nameIdx] || '').trim();
+      const phoneVal = String(row[phoneIdx] || '').trim();
+
+      if (!nameVal || !phoneVal) continue; // Skip rows without name or phone
+
+      // Extract details
+      const sourceVal = sourceIdx >= 0 ? String(row[sourceIdx] || '') : 'Excel Yükleme';
+      const roomCountVal = roomCountIdx >= 0 ? String(row[roomCountIdx] || '') : '';
+      const currentLocationVal = currentLocationIdx >= 0 ? String(row[currentLocationIdx] || '') : '';
+      const targetRegionVal = targetRegionIdx >= 0 ? String(row[targetRegionIdx] || '') : '';
+      
+      // Combine multiple context if needed
+      let notesVal = notesIdx >= 0 ? String(row[notesIdx] || '') : '';
+      
+      // Smart warmth parser based on status column
+      let warmthVal: 'cold' | 'warm' | 'hot' = 'warm';
+      if (warmthIdx >= 0) {
+        const rawWarmth = String(row[warmthIdx] || '').toLowerCase();
+        if (rawWarmth.includes('red') || rawWarmth.includes('iptal') || rawWarmth.includes('olumsuz')) {
+          warmthVal = 'cold';
+        } else if (rawWarmth.includes('randevu') || rawWarmth.includes('sıcak') || rawWarmth.includes('kapatıldı') || rawWarmth.includes('olumlu')) {
+          warmthVal = 'hot';
+        }
+      }
+
+      const budgetVal = budgetIdx >= 0 ? Number(String(row[budgetIdx] || '').replace(/\D/g, '')) || 0 : 0;
+      
+      // Create lead
+      const leadId = crypto.randomUUID();
+      const newLead: Lead = {
+        id: leadId,
+        name: nameVal,
+        phone: phoneVal,
+        email: '',
+        source: sourceVal,
+        property_type: 'Daire', // Default
+        room_count: roomCountVal || '2+1',
+        purpose: 'Oturumluk',
+        target_region: targetRegionVal,
+        current_location: currentLocationVal,
+        marital_status: 'Evli',
+        occupation: '',
+        budget: budgetVal,
+        warmth: warmthVal,
+        is_alert_active: true,
+        notes: notesVal,
+        created_at: new Date().toISOString(),
+      };
+
+      await StorageManager.saveLead(newLead);
+
+      // Create appointment if appointment date is valid
+      if (appDateIdx >= 0 && row[appDateIdx]) {
+        const rawAppDate = String(row[appDateIdx]).trim();
+        if (rawAppDate && rawAppDate !== 'Bilinmiyor') {
+          // Attempt to parse date in dd.mm.yyyy format
+          let formattedDateStr = '';
+          const parts = rawAppDate.split('.');
+          if (parts.length === 3) {
+            // Convert dd.mm.yyyy to yyyy-mm-dd
+            formattedDateStr = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}T12:00`;
+          } else {
+            const dateObj = new Date(rawAppDate);
+            if (!isNaN(dateObj.getTime())) {
+              formattedDateStr = dateObj.toISOString().slice(0, 16);
+            }
+          }
+
+          if (formattedDateStr) {
+            const newApp: Appointment = {
+              id: crypto.randomUUID(),
+              lead_id: leadId,
+              date_time: formattedDateStr,
+              location: 'Ofis / Yerinde Gösterim',
+              status: 'pending',
+              notes: `Excel'den otomatik oluşturuldu. Orijinal tarih: ${rawAppDate}`,
+            };
+            await StorageManager.saveAppointment(newApp);
+          }
+        }
+      }
+
+      imported++;
+    }
+
+    setImportCount(imported);
+    setImportSuccess(true);
+    setImporting(false);
+    setExcelHeaders([]);
+    setExcelRows([]);
+    await loadAllData();
+  };
 
   // Form States
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
@@ -1001,6 +1192,289 @@ export default function Home() {
                   Formu Yeni Sekmede Aç
                 </a>
               </div>
+            </div>
+          )}
+
+          {/* TAB CONTENT: EXCEL / CSV IMPORT */}
+          {activeTab === 'import' && (
+            <div className="glass-panel" style={{ maxWidth: '850px', margin: '0 auto' }}>
+              <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '0.5rem' }}>Excel / CSV Dosyasından Veri Yükle</h2>
+              <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                Eski müşteri verilerinizi sisteme toplu olarak aktarın. Kolonları eşleştirerek Excel dosyanızın biçimini bozmadan doğrudan yükleme yapabilirsiniz.
+              </p>
+
+              {/* Step 1: File Upload */}
+              {excelHeaders.length === 0 && !importSuccess && (
+                <div style={{
+                  border: '2px dashed var(--glass-border)',
+                  borderRadius: '16px',
+                  padding: '3rem 2rem',
+                  textAlign: 'center',
+                  background: 'rgba(0,0,0,0.1)',
+                  cursor: 'pointer',
+                  position: 'relative'
+                }}>
+                  <input
+                    type="file"
+                    accept=".xlsx, .xls, .csv"
+                    onChange={handleExcelUpload}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      height: '100%',
+                      opacity: 0,
+                      cursor: 'pointer'
+                    }}
+                  />
+                  <QrCode size={48} style={{ color: 'var(--color-primary)', marginBottom: '1rem', opacity: 0.7 }} />
+                  <h4 style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '0.5rem' }}>Dosyayı Seçin veya Sürükleyin</h4>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    Desteklenen formatlar: **.xlsx, .xls, .csv**
+                  </p>
+                  <div style={{
+                    marginTop: '1.5rem',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 1rem',
+                    borderRadius: '20px',
+                    fontSize: '0.8rem',
+                    background: 'rgba(52, 211, 153, 0.1)',
+                    color: 'var(--color-success)',
+                    border: '1px solid rgba(52, 211, 153, 0.2)'
+                  }}>
+                    <span>Mükerrer Kayıt Politikası: **Mükerrer Kayıtlara İzin Verilir (Keep Both)**</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: Column Mapping */}
+              {excelHeaders.length > 0 && (
+                <div>
+                  <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid var(--glass-border)' }}>
+                    <p style={{ fontSize: '0.9rem', fontWeight: 600 }}>
+                      ✓ **{excelRows.length} adet veri satırı algılandı.** Lütfen aşağıdaki CRM alanlarının Excel tablonuzda hangi kolona denk geldiğini eşleştirin.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
+                    {/* CRM Field Selectors */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Zorunlu Alanlar</h4>
+                      
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label style={{ fontWeight: 'bold' }}>Adı Soyadı (Müşteri İsmi) *</label>
+                        <select 
+                          className="form-control"
+                          required
+                          value={columnMap.name}
+                          onChange={(e) => setColumnMap({ ...columnMap, name: e.target.value })}
+                        >
+                          <option value="">-- Kolon Seçin --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label style={{ fontWeight: 'bold' }}>Telefon Numarası *</label>
+                        <select 
+                          className="form-control"
+                          required
+                          value={columnMap.phone}
+                          onChange={(e) => setColumnMap({ ...columnMap, phone: e.target.value })}
+                        >
+                          <option value="">-- Kolon Seçin --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem', marginTop: '1rem' }}>Randevu & Bütçe Alanları</h4>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>Randevu Tarihi (Varsa otomatik randevu açılır)</label>
+                        <select 
+                          className="form-control"
+                          value={columnMap.appointment_date}
+                          onChange={(e) => setColumnMap({ ...columnMap, appointment_date: e.target.value })}
+                        >
+                          <option value="">-- Eşleştirme Yok (Atla) --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>Tahmini Müşteri Bütçesi</label>
+                        <select 
+                          className="form-control"
+                          value={columnMap.budget}
+                          onChange={(e) => setColumnMap({ ...columnMap, budget: e.target.value })}
+                        >
+                          <option value="">-- Eşleştirme Yok (Atla) --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Column 2 details */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>İlgi & Profil Alanları</h4>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>Müşteri Kaynağı (Instagram, WhatsApp vb.)</label>
+                        <select 
+                          className="form-control"
+                          value={columnMap.source}
+                          onChange={(e) => setColumnMap({ ...columnMap, source: e.target.value })}
+                        >
+                          <option value="">-- Eşleştirme Yok (Atla) --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>İlgilendiği Daire Tipi / Oda Sayısı</label>
+                        <select 
+                          className="form-control"
+                          value={columnMap.room_count}
+                          onChange={(e) => setColumnMap({ ...columnMap, room_count: e.target.value })}
+                        >
+                          <option value="">-- Eşleştirme Yok (Atla) --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>Yaşadığı Şehir</label>
+                        <select 
+                          className="form-control"
+                          value={columnMap.current_location}
+                          onChange={(e) => setColumnMap({ ...columnMap, current_location: e.target.value })}
+                        >
+                          <option value="">-- Eşleştirme Yok (Atla) --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>İlgilendiği Bölge (Altınoluk, Akçay vb.)</label>
+                        <select 
+                          className="form-control"
+                          value={columnMap.target_region}
+                          onChange={(e) => setColumnMap({ ...columnMap, target_region: e.target.value })}
+                        >
+                          <option value="">-- Eşleştirme Yok (Atla) --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>Sıcaklık Durumu (Lead Sonucu / Aksiyon)</label>
+                        <select 
+                          className="form-control"
+                          value={columnMap.warmth_outcome}
+                          onChange={(e) => setColumnMap({ ...columnMap, warmth_outcome: e.target.value })}
+                        >
+                          <option value="">-- Eşleştirme Yok (Atla) --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>Müşteri Özel Notları / Açıklamalar</label>
+                        <select 
+                          className="form-control"
+                          value={columnMap.notes}
+                          onChange={(e) => setColumnMap({ ...columnMap, notes: e.target.value })}
+                        >
+                          <option value="">-- Eşleştirme Yok (Atla) --</option>
+                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Excel Preview Block */}
+                  <div style={{ marginBottom: '2rem' }}>
+                    <h5 style={{ fontSize: '0.9rem', fontWeight: 700, marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Veri Önizleme (İlk 3 Satır)</h5>
+                    <div style={{ overflowX: 'auto', border: '1px solid var(--glass-border)', borderRadius: '8px' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem', textAlign: 'left' }}>
+                        <thead>
+                          <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--glass-border)' }}>
+                            {excelHeaders.map(h => (
+                              <th key={h} style={{ padding: '0.5rem 0.75rem', fontWeight: 600 }}>{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {excelRows.slice(0, 3).map((row, idx) => (
+                            <tr key={idx} style={{ borderBottom: idx < 2 ? '1px solid var(--glass-border)' : 'none' }}>
+                              {excelHeaders.map((_, cIdx) => (
+                                <td key={cIdx} style={{ padding: '0.5rem 0.75rem', color: 'var(--text-secondary)', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', maxWidth: '150px' }}>
+                                  {row[cIdx] !== undefined ? String(row[cIdx]) : '-'}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1rem' }}>
+                    <button
+                      onClick={() => {
+                        setExcelHeaders([]);
+                        setExcelRows([]);
+                      }}
+                      className="glow-btn"
+                      style={{ background: 'var(--bg-tertiary)', border: '1px solid var(--glass-border)', color: 'var(--text-secondary)', boxShadow: 'none' }}
+                      disabled={importing}
+                    >
+                      Dosyayı İptal Et
+                    </button>
+                    <button
+                      onClick={runImport}
+                      className="glow-btn"
+                      style={{ flexGrow: 1, justifyContent: 'center' }}
+                      disabled={importing}
+                    >
+                      {importing ? (
+                        <>
+                          <RefreshCw className="animate-spin" size={18} /> Veriler Aktarılıyor...
+                        </>
+                      ) : (
+                        <>
+                          <Check size={18} /> {excelRows.length} Müşteriyi CRM'e Aktar
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Success Screen */}
+              {importSuccess && (
+                <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+                  <div style={{ display: 'inline-flex', background: 'rgba(52, 211, 153, 0.1)', color: 'var(--color-success)', padding: '1rem', borderRadius: '50%', marginBottom: '1.5rem' }}>
+                    <CheckCircle2 size={40} style={{ color: 'var(--color-success)' }} />
+                  </div>
+                  <h3 style={{ fontSize: '1.3rem', fontWeight: 800, marginBottom: '0.5rem' }}>Aktarım Başarıyla Tamamlandı!</h3>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+                    **{importCount} adet müşteri kaydı** Excel'den başarıyla CRM veritabanınıza yüklenmiştir. Randevu tarihleri bulunan müşteriler için otomatik olarak randevular planlanmıştır.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setImportSuccess(false);
+                      setActiveTab('dashboard');
+                    }}
+                    className="glow-btn"
+                  >
+                    Müşteri Listesine (CRM) Dön
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </main>

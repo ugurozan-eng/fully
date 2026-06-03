@@ -48,6 +48,7 @@ export default function Header({ activeTab, setActiveTab }: HeaderProps) {
     { id: 'matchmaker', label: 'Eşleştirici' },
     { id: 'reports', label: 'Raporlama' },
     { id: 'qr-intake', label: 'QR Giriş' },
+    { id: 'import', label: 'Excel/Veri Yükle' },
   ];
 
   return (
