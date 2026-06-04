@@ -1,14 +1,14 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import Header from '@/components/Header';
+import Sidebar from '@/components/Sidebar';
 import { StorageManager } from '@/lib/storage';
 import { Lead, Appointment, Property } from '@/lib/types';
 import { 
   Plus, Phone, Calendar, Trash2, Edit, Check, X, 
   AlertTriangle, AlertCircle, Share2, QrCode, Search, 
   RefreshCw, Briefcase, MapPin, Heart, DollarSign, MessageCircle,
-  CheckCircle2
+  CheckCircle2, Menu, Info, ChevronUp, BarChart3, Users, Sparkles
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import * as XLSX from 'xlsx';
@@ -20,6 +20,11 @@ export default function Home() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  
+  // Design Layout / Navigation States
+  const [isOpenMobile, setIsOpenMobile] = useState<boolean>(false);
+  const [selectedMetric, setSelectedMetric] = useState<'total' | 'hot' | 'appointments' | 'properties'>('total');
+  const [chartType, setChartType] = useState<'combined' | 'individual'>('combined');
 
   // Excel Import States
   const [excelWorkbook, setExcelWorkbook] = useState<XLSX.WorkBook | null>(null);
@@ -469,6 +474,7 @@ export default function Home() {
       region: newProperty.region || '',
       type: newProperty.type || 'Daire',
       room_count: newProperty.room_count || '2+1',
+      created_at: new Date().toISOString(),
     };
     await StorageManager.saveProperty(propToSave);
     await loadAllData();
@@ -552,69 +558,334 @@ export default function Home() {
     return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(val);
   };
 
+  // Generate date points for the last 10 days
+  const chartDays = Array.from({ length: 10 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (9 - i));
+    return d;
+  });
+
+  const getChartDataPoints = () => {
+    return chartDays.map(day => {
+      const dateStr = day.toISOString().split('T')[0];
+      let count = 0;
+
+      if (selectedMetric === 'total') {
+        const matching = leads.filter(l => l.created_at && l.created_at.split('T')[0] === dateStr);
+        count = chartType === 'combined' ? matching.length : matching.filter(l => l.warmth === 'hot').length;
+      } else if (selectedMetric === 'hot') {
+        const matching = leads.filter(l => l.created_at && l.created_at.split('T')[0] === dateStr && l.warmth === 'hot');
+        count = matching.length;
+      } else if (selectedMetric === 'appointments') {
+        const matching = appointments.filter(a => a.date_time && a.date_time.split('T')[0] === dateStr);
+        count = chartType === 'combined' ? matching.length : matching.filter(a => a.status === 'completed').length;
+      } else if (selectedMetric === 'properties') {
+        const matching = properties.filter(p => p.created_at && p.created_at.split('T')[0] === dateStr);
+        count = matching.length;
+      }
+
+      return {
+        label: day.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }),
+        count
+      };
+    });
+  };
+
+  const chartData = getChartDataPoints();
+  const counts = chartData.map(d => d.count);
+  const maxCount = Math.max(...counts, 4);
+
+  const points = chartData.map((d, i) => {
+    const x = 40 + i * (440 / 9);
+    const y = 170 - (d.count / maxCount) * 140;
+    return { x, y, ...d };
+  });
+
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+  const areaPath = points.length > 0 
+    ? `${linePath} L ${points[points.length - 1].x} 170 L ${points[0].x} 170 Z` 
+    : '';
+
   return (
-    <div className="main-container" style={{ maxWidth: '1400px', width: '100%', margin: '0 auto', padding: '0 1rem 3rem 1rem' }}>
-      <Header activeTab={activeTab} setActiveTab={(tab) => {
-        if (tab !== 'add-lead') setEditingLead(null);
-        setActiveTab(tab);
-      }} />
-
-      {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '300px', flexDirection: 'column', gap: '1rem' }}>
-          <RefreshCw className="animate-spin" size={40} style={{ color: 'var(--color-primary)' }} />
-          <p style={{ color: 'var(--text-secondary)' }}>Veriler yükleniyor...</p>
+    <div className="app-container">
+      {/* Mobile Top Bar */}
+      <div className="mobile-top-bar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div style={{
+            background: 'var(--primary-gradient)',
+            width: '28px',
+            height: '28px',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontWeight: 800,
+            fontSize: '0.95rem',
+            color: '#fff'
+          }}>
+            F
+          </div>
+          <span style={{ fontWeight: 800, fontSize: '1.1rem', letterSpacing: '-0.5px' }}>FullyCRM</span>
         </div>
-      ) : (
-        <main className="animate-fade-in">
-          {/* Quick Stats Banner */}
-          {activeTab === 'dashboard' && (
-            <div className="stats-grid" style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-              gap: '1.25rem',
-              marginBottom: '2rem'
-            }}>
-              <div className="glass-panel" style={{ display: 'flex', alignItems: 'center', gap: '1rem', borderLeft: '4px solid var(--color-primary)' }}>
-                <div style={{ background: 'rgba(167, 139, 250, 0.1)', color: 'var(--color-primary)', padding: '0.75rem', borderRadius: '12px' }}>
-                  <Briefcase size={24} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Toplam Lead</div>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>{leads.length}</div>
-                </div>
-              </div>
+        <button 
+          onClick={() => setIsOpenMobile(!isOpenMobile)}
+          style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer' }}
+        >
+          <Menu size={22} />
+        </button>
+      </div>
 
-              <div className="glass-panel" style={{ display: 'flex', alignItems: 'center', gap: '1rem', borderLeft: '4px solid var(--color-danger)' }}>
-                <div style={{ background: 'rgba(248, 113, 113, 0.1)', color: 'var(--color-danger)', padding: '0.75rem', borderRadius: '12px' }}>
-                  <Heart size={24} />
-                </div>
-                <div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Sıcak Müşteri</div>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>{leads.filter(l => l.warmth === 'hot').length}</div>
-                </div>
-              </div>
+      {/* Sidebar Component */}
+      <Sidebar 
+        activeTab={activeTab} 
+        setActiveTab={(tab) => {
+          if (tab !== 'add-lead') setEditingLead(null);
+          setActiveTab(tab);
+        }}
+        isOpenMobile={isOpenMobile}
+        setIsOpenMobile={setIsOpenMobile}
+      />
 
-              <div className="glass-panel" style={{ display: 'flex', alignItems: 'center', gap: '1rem', borderLeft: '4px solid var(--color-success)' }}>
-                <div style={{ background: 'rgba(52, 211, 153, 0.1)', color: 'var(--color-success)', padding: '0.75rem', borderRadius: '12px' }}>
-                  <Calendar size={24} />
+      <div className="main-content-wrapper">
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '300px', flexDirection: 'column', gap: '1rem' }}>
+            <RefreshCw className="animate-spin" size={40} style={{ color: 'var(--color-primary)' }} />
+            <p style={{ color: 'var(--text-secondary)' }}>Veriler yükleniyor...</p>
+          </div>
+        ) : (
+          <main className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '2rem', width: '100%' }}>
+            {/* Quick Stats Banner */}
+            {activeTab === 'dashboard' && (
+              <div className="stats-cards-row">
+                {/* Card 1: Toplam Lead */}
+                <div 
+                  className={`glass-panel stats-mini-card ${selectedMetric === 'total' ? 'card-highlight-orange' : ''}`}
+                  onClick={() => setSelectedMetric('total')}
+                  style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', position: 'relative' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <Users size={16} style={{ color: selectedMetric === 'total' ? 'var(--color-primary)' : 'var(--text-secondary)' }} />
+                      Toplam Müşteri
+                    </span>
+                    <span title="Sistemde kayıtlı toplam müşteri adedi" style={{ display: 'inline-flex', cursor: 'help' }}><Info size={14} style={{ color: 'var(--text-muted)' }} /></span>
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                      <span className="stats-value-display">{leads.length}</span>
+                      <span className="stats-trend-badge stats-trend-up">
+                        <ChevronUp size={12} />
+                        +{leads.filter(l => {
+                          const tenDaysAgo = new Date();
+                          tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+                          return l.created_at && new Date(l.created_at) > tenDaysAgo;
+                        }).length}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Son 10 günde eklenenler</p>
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Aktif Randevu</div>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>{appointments.filter(a => a.status === 'pending').length}</div>
-                </div>
-              </div>
 
-              <div className="glass-panel" style={{ display: 'flex', alignItems: 'center', gap: '1rem', borderLeft: '4px solid var(--color-accent)' }}>
-                <div style={{ background: 'rgba(34, 211, 238, 0.1)', color: 'var(--color-accent)', padding: '0.75rem', borderRadius: '12px' }}>
-                  <DollarSign size={24} />
+                {/* Card 2: Sıcak Takip */}
+                <div 
+                  className={`glass-panel stats-mini-card ${selectedMetric === 'hot' ? 'card-highlight-orange' : ''}`}
+                  onClick={() => setSelectedMetric('hot')}
+                  style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <Heart size={16} style={{ color: selectedMetric === 'hot' ? 'var(--color-primary)' : 'var(--text-secondary)' }} />
+                      Sıcak Takip (Hot)
+                    </span>
+                    <span title="Sıcak takip kategorisindeki yüksek potansiyelli müşteriler" style={{ display: 'inline-flex', cursor: 'help' }}><Info size={14} style={{ color: 'var(--text-muted)' }} /></span>
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                      <span className="stats-value-display">{leads.filter(l => l.warmth === 'hot').length}</span>
+                      <span className="stats-trend-badge stats-trend-up" style={{ background: 'rgba(255, 106, 0, 0.1)', color: 'var(--color-primary)' }}>
+                        {((leads.filter(l => l.warmth === 'hot').length / Math.max(leads.length, 1)) * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Toplam içindeki oranı</p>
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Aktif Portföy</div>
-                  <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>{properties.length}</div>
+
+                {/* Card 3: Aktif Randevular */}
+                <div 
+                  className={`glass-panel stats-mini-card ${selectedMetric === 'appointments' ? 'card-highlight-orange' : ''}`}
+                  onClick={() => setSelectedMetric('appointments')}
+                  style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <Calendar size={16} style={{ color: selectedMetric === 'appointments' ? 'var(--color-primary)' : 'var(--text-secondary)' }} />
+                      Aktif Randevu
+                    </span>
+                    <span title="Görüşme veya sunum bekleyen aktif randevular" style={{ display: 'inline-flex', cursor: 'help' }}><Info size={14} style={{ color: 'var(--text-muted)' }} /></span>
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                      <span className="stats-value-display">{appointments.filter(a => a.status === 'pending').length}</span>
+                      <span className="stats-trend-badge stats-trend-up" style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--color-success)' }}>
+                        Tamamlanan: {appointments.filter(a => a.status === 'completed').length}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Sonuçlanmayı bekleyen görüşmeler</p>
+                  </div>
+                </div>
+
+                {/* Card 4: Aktif Portföy */}
+                <div 
+                  className={`glass-panel stats-mini-card ${selectedMetric === 'properties' ? 'card-highlight-orange' : ''}`}
+                  onClick={() => setSelectedMetric('properties')}
+                  style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                      <Sparkles size={16} style={{ color: selectedMetric === 'properties' ? 'var(--color-primary)' : 'var(--text-secondary)' }} />
+                      Aktif Portföy
+                    </span>
+                    <span title="Satışta olan mülk portföyü adedi" style={{ display: 'inline-flex', cursor: 'help' }}><Info size={14} style={{ color: 'var(--text-muted)' }} /></span>
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+                      <span className="stats-value-display">{properties.length}</span>
+                      <span className="stats-trend-badge stats-trend-up">
+                        <ChevronUp size={12} />
+                        +{properties.filter(p => {
+                          const tenDaysAgo = new Date();
+                          tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+                          return p.created_at && new Date(p.created_at) > tenDaysAgo;
+                        }).length}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Toplam mülk portföyü</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+
+            {/* Chart Section */}
+            {activeTab === 'dashboard' && (
+              <div className="glass-panel chart-container-card animate-fade-in" style={{ marginTop: '0rem' }}>
+                <div className="chart-header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                  <div>
+                    <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <BarChart3 size={18} style={{ color: 'var(--color-primary)' }} />
+                      {selectedMetric === 'total' && 'Müşteri Kayıt Eğilimi'}
+                      {selectedMetric === 'hot' && 'Sıcak Takip Eğilimi'}
+                      {selectedMetric === 'appointments' && 'Randevu Yoğunluk Eğilimi'}
+                      {selectedMetric === 'properties' && 'Portföy Giriş Eğilimi'}
+                    </h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                      Son 10 güne ait veri yoğunluğu trend grafiği
+                    </p>
+                  </div>
+                  
+                  {/* Combined / Individual Toggle button mirroring Peeksy */}
+                  {(selectedMetric === 'total' || selectedMetric === 'appointments') && (
+                    <div className="chart-toggle-group">
+                      <button 
+                        onClick={() => setChartType('combined')}
+                        className={`chart-toggle-btn ${chartType === 'combined' ? 'active' : ''}`}
+                      >
+                        Genel Rapor
+                      </button>
+                      <button 
+                        onClick={() => setChartType('individual')}
+                        className={`chart-toggle-btn ${chartType === 'individual' ? 'active' : ''}`}
+                      >
+                        {selectedMetric === 'total' ? 'Sadece Sıcaklar' : 'Sadece Tamamlananlar'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* SVG Curve Graph */}
+                <div className="svg-chart-wrapper" style={{ position: 'relative', width: '100%', height: '200px' }}>
+                  <svg width="100%" height="100%" viewBox="0 0 500 200" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
+                    <defs>
+                      <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--color-primary)" stopOpacity="0.25" />
+                        <stop offset="100%" stopColor="var(--color-primary)" stopOpacity="0.0" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Horizontal Grids */}
+                    <line x1="40" y1="30" x2="480" y2="30" stroke="rgba(255,255,255,0.04)" strokeDasharray="3 3" />
+                    <line x1="40" y1="100" x2="480" y2="100" stroke="rgba(255,255,255,0.04)" strokeDasharray="3 3" />
+                    <line x1="40" y1="170" x2="480" y2="170" stroke="rgba(255,255,255,0.06)" />
+
+                    {/* Y-Axis Labels */}
+                    <text x="20" y="34" fill="var(--text-secondary)" opacity="0.6" fontSize="9" fontWeight="600" textAnchor="end">{maxCount}</text>
+                    <text x="20" y="104" fill="var(--text-secondary)" opacity="0.6" fontSize="9" fontWeight="600" textAnchor="end">{Math.round(maxCount / 2)}</text>
+                    <text x="20" y="174" fill="var(--text-secondary)" opacity="0.6" fontSize="9" fontWeight="600" textAnchor="end">0</text>
+
+                    {/* Area fill path under line */}
+                    {areaPath && <path d={areaPath} fill="url(#chartGradient)" />}
+
+                    {/* Line path */}
+                    {linePath && (
+                      <path 
+                        d={linePath} 
+                        fill="none" 
+                        stroke="var(--color-primary)" 
+                        strokeWidth="2.5" 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                      />
+                    )}
+
+                    {/* Data Points Dots */}
+                    {points.map((p, i) => (
+                      <g key={i}>
+                        <circle 
+                          cx={p.x} 
+                          cy={p.y} 
+                          r="4" 
+                          fill="#0b0d13" 
+                          stroke="var(--color-primary)" 
+                          strokeWidth="2" 
+                        />
+                        <circle 
+                          cx={p.x} 
+                          cy={p.y} 
+                          r="10" 
+                          fill="transparent" 
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <title>{`${p.label}: ${p.count} adet`}</title>
+                        </circle>
+                        {/* Count text label above dot */}
+                        {p.count > 0 && (
+                          <text 
+                            x={p.x} 
+                            y={p.y - 10} 
+                            fill="var(--text-primary)" 
+                            fontSize="9" 
+                            fontWeight="800" 
+                            textAnchor="middle"
+                          >
+                            {p.count}
+                          </text>
+                        )}
+                        {/* X-Axis labels */}
+                        <text 
+                          x={p.x} 
+                          y="190" 
+                          fill="var(--text-secondary)" 
+                          fontSize="9" 
+                          fontWeight="500" 
+                          textAnchor="middle"
+                        >
+                          {p.label}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
+                </div>
+              </div>
+            )}
 
           {/* TAB CONTENT: DASHBOARD */}
           {activeTab === 'dashboard' && (
@@ -1577,6 +1848,7 @@ export default function Home() {
           )}
         </main>
       )}
+      </div>
     </div>
   );
 
