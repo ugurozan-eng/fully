@@ -3,15 +3,120 @@
 import React, { useState, useEffect } from 'react';
 import Sidebar from '@/components/Sidebar';
 import { StorageManager } from '@/lib/storage';
+import { seedLeadsFromExcel, runWarmthMigration } from '@/app/actions';
 import { Lead, Appointment, Property } from '@/lib/types';
 import { 
   Plus, Phone, Calendar, Trash2, Edit, Check, X, 
   AlertTriangle, AlertCircle, Share2, QrCode, Search, 
   RefreshCw, Briefcase, MapPin, Heart, DollarSign, MessageCircle,
-  CheckCircle2, Menu, Info, ChevronUp, BarChart3, Users, Sparkles
+  CheckCircle2, Menu, Info, ChevronUp, ChevronDown, BarChart3, Users, Sparkles
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import * as XLSX from 'xlsx';
+
+// Turkish-aware string normalizer for robust excel header matching
+function cleanStringForCompare(str: string): string {
+  if (!str) return '';
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ı/g, 'i')
+    .replace(/ş/g, 's')
+    .replace(/ç/g, 'c')
+    .replace(/ğ/g, 'g')
+    .replace(/ü/g, 'u')
+    .replace(/ö/g, 'o')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// Robust price parser for Turkish and US formats
+function cleanPrice(val: any): number {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return val;
+  
+  let str = String(val).trim();
+  str = str.replace(/[^0-9,\.]/g, '');
+  
+  if (str === '') return 0;
+  
+  const lastDot = str.lastIndexOf('.');
+  const lastComma = str.lastIndexOf(',');
+  
+  if (lastDot !== -1 && lastComma !== -1) {
+    if (lastComma > lastDot) {
+      str = str.replace(/\./g, '').replace(/,/g, '.');
+    } else {
+      str = str.replace(/,/g, '');
+    }
+  } else if (lastComma !== -1) {
+    const parts = str.split(',');
+    if (parts[parts.length - 1].length === 3) {
+      str = str.replace(/,/g, '');
+    } else {
+      str = str.replace(/,/g, '.');
+    }
+  } else if (lastDot !== -1) {
+    const parts = str.split('.');
+    if (parts[parts.length - 1].length === 3 || parts.length > 2) {
+      str = str.replace(/\./g, '');
+    }
+  }
+  
+  const parsed = parseFloat(str);
+  return isNaN(parsed) ? 0 : Math.round(parsed);
+}
+
+// Helper to format raw numbers to Turkish dot separators format (e.g. 5.000.000)
+function formatNumberWithDots(val: any): string {
+  if (val === undefined || val === null || val === '') return '';
+  const numStr = String(val).replace(/\D/g, '');
+  if (numStr === '') return '';
+  return numStr.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+function getTodayDateString(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateToShow(dateStr: string | undefined): string {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    
+    // Check if it represents UTC midnight (pure date) to avoid local timezone shifts
+    if (typeof dateStr === 'string' && dateStr.includes('T00:00:00')) {
+      const day = String(d.getUTCDate()).padStart(2, '0');
+      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const year = d.getUTCFullYear();
+      return `${day}.${month}.${year}`;
+    } else {
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      return `${day}.${month}.${year}`;
+    }
+  } catch (err) {
+    return dateStr;
+  }
+}
+
+function isSameDay(date1: Date, date2Str: string | undefined): boolean {
+  if (!date2Str) return false;
+  try {
+    const d2 = new Date(date2Str);
+    return date1.getFullYear() === d2.getFullYear() &&
+           date1.getMonth() === d2.getMonth() &&
+           date1.getDate() === d2.getDate();
+  } catch {
+    return false;
+  }
+}
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -20,11 +125,41 @@ export default function Home() {
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Calendar States
+  const [calendarView, setCalendarView] = useState<'day' | 'week' | 'month'>('month');
+  const [calendarDate, setCalendarDate] = useState<Date>(new Date());
+  const [hoveredAppId, setHoveredAppId] = useState<string | null>(null);
+  
+  // Modal states
+  const [showAddAppModal, setShowAddAppModal] = useState<boolean>(false);
+  const [showEditAppModal, setShowEditAppModal] = useState<boolean>(false);
+  const [selectedAppToEdit, setSelectedAppToEdit] = useState<Appointment | null>(null);
+  
+  // Search state inside Modal
+  const [appSearchQuery, setAppSearchQuery] = useState<string>('');
+  const [selectedLeadForApp, setSelectedLeadForApp] = useState<Lead | null>(null);
+  const [showSearchDropdown, setShowSearchDropdown] = useState<boolean>(false);
+
+  // Form states inside Modal
+  const [appDateTime, setAppDateTime] = useState<string>('');
+  const [appLocation, setAppLocation] = useState<string>('');
+  const [appNotes, setAppNotes] = useState<string>('');
+  const [appType, setAppType] = useState<string>('');
+  const [appStatus, setAppStatusState] = useState<'pending' | 'completed' | 'cancelled'>('pending');
   
   // Design Layout / Navigation States
   const [isOpenMobile, setIsOpenMobile] = useState<boolean>(false);
   const [selectedMetric, setSelectedMetric] = useState<'total' | 'hot' | 'appointments' | 'properties'>('total');
-  const [chartType, setChartType] = useState<'combined' | 'individual'>('combined');
+  
+  // New Matchmaker & Import States
+  const [importType, setImportType] = useState<'leads' | 'properties'>('leads');
+  const [matchmakerSubTab, setMatchmakerSubTab] = useState<'matching' | 'portfolio'>('matching');
+  const [selectedLeadId, setSelectedLeadId] = useState<string>('');
+  const [showAddPropForm, setShowAddPropForm] = useState<boolean>(false);
+  const [propertySearchQuery, setPropertySearchQuery] = useState<string>('');
+  const [showAllColumns, setShowAllColumns] = useState<boolean>(false);
+  const [expandedPropRows, setExpandedPropRows] = useState<Record<string, boolean>>({});
 
   // Excel Import States
   const [excelWorkbook, setExcelWorkbook] = useState<XLSX.WorkBook | null>(null);
@@ -52,7 +187,7 @@ export default function Home() {
   const parseSheet = (wb: XLSX.WorkBook, sheetName: string) => {
     try {
       const ws = wb.Sheets[sheetName];
-      const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+      const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as any[][];
 
       if (data.length === 0) {
         alert('Seçilen sayfa boş görünüyor.');
@@ -63,21 +198,39 @@ export default function Home() {
       let headerRowIdx = 0;
       let found = false;
 
-      for (let i = 0; i < Math.min(data.length, 25); i++) {
-        const row = data[i] || [];
-        const hasName = row.some(cell => {
-          const val = String(cell || '').toLowerCase();
-          return val.includes('isim') || val.includes('ad soyad') || val.includes('adısayadı');
-        });
-        const hasPhone = row.some(cell => {
-          const val = String(cell || '').toLowerCase();
-          return val === 'tel' || val.includes('telefon') || val.includes('gsm') || val.includes('telno');
-        });
+      if (importType === 'leads') {
+        for (let i = 0; i < Math.min(data.length, 25); i++) {
+          const row = data[i] || [];
+          const hasName = row.some(cell => {
+            const val = String(cell || '').toLowerCase();
+            return val.includes('isim') || val.includes('ad soyad') || val.includes('adısayadı');
+          });
+          const hasPhone = row.some(cell => {
+            const val = String(cell || '').toLowerCase();
+            return val === 'tel' || val.includes('telefon') || val.includes('gsm') || val.includes('telno');
+          });
 
-        if (hasName && hasPhone) {
-          headerRowIdx = i;
-          found = true;
-          break;
+          if (hasName && hasPhone) {
+            headerRowIdx = i;
+            found = true;
+            break;
+          }
+        }
+      } else {
+        // Properties header finder
+        for (let i = 0; i < Math.min(data.length, 25); i++) {
+          const row = data[i] || [];
+          const hasParsel = row.some(cell => String(cell || '').toLowerCase().includes('parsel'));
+          const hasBagBol = row.some(cell => {
+            const val = String(cell || '').toLowerCase();
+            return val.includes('bağ') || val.includes('bag') || val.includes('böl') || val.includes('bol');
+          });
+
+          if (hasParsel || hasBagBol) {
+            headerRowIdx = i;
+            found = true;
+            break;
+          }
         }
       }
 
@@ -101,27 +254,29 @@ export default function Home() {
       setSelectedSheet(sheetName);
       setImportSuccess(false);
 
-      // Auto mapping logic
-      const newMap = {
-        name: '', phone: '', source: '', property_type: '', room_count: '',
-        current_location: '', target_region: '', notes: '', warmth_outcome: '',
-        appointment_date: '', budget: '',
-      };
-      
-      headers.forEach((h) => {
-        const lowerH = h.toLowerCase();
-        if (lowerH.includes('isim') || lowerH.includes('ad soyad') || lowerH.includes('adısayadı')) newMap.name = h;
-        else if (lowerH === 'tel' || lowerH.includes('telefon') || lowerH.includes('gsm')) newMap.phone = h;
-        else if (lowerH.includes('kaynak') || lowerH.includes('kanal') || lowerH.includes('kategori')) newMap.source = h;
-        else if (lowerH.includes('daire') || lowerH.includes('emlak tipi') || lowerH.includes('ilgilen')) newMap.room_count = h;
-        else if (lowerH === 'il' || lowerH.includes('şehir') || lowerH.includes('yaşadığı')) newMap.current_location = h;
-        else if (lowerH.includes('bölge') || lowerH.includes('konum')) newMap.target_region = h;
-        else if (lowerH.includes('not') || lowerH.includes('açıklama')) newMap.notes = h;
-        else if (lowerH.includes('sonuç') || lowerH.includes('durum') || lowerH.includes('aksiyon')) newMap.warmth_outcome = h;
-        else if (lowerH.includes('randevu')) newMap.appointment_date = h;
-        else if (lowerH.includes('bütçe') || lowerH.includes('fiyat')) newMap.budget = h;
-      });
-      setColumnMap(newMap);
+      if (importType === 'leads') {
+        // Auto mapping logic
+        const newMap = {
+          name: '', phone: '', source: '', property_type: '', room_count: '',
+          current_location: '', target_region: '', notes: '', warmth_outcome: '',
+          appointment_date: '', budget: '',
+        };
+        
+        headers.forEach((h) => {
+          const lowerH = h.toLowerCase();
+          if (lowerH.includes('isim') || lowerH.includes('ad soyad') || lowerH.includes('adısayadı')) newMap.name = h;
+          else if (lowerH === 'tel' || lowerH.includes('telefon') || lowerH.includes('gsm')) newMap.phone = h;
+          else if (lowerH.includes('kaynak') || lowerH.includes('kanal') || lowerH.includes('kategori')) newMap.source = h;
+          else if (lowerH.includes('daire') || lowerH.includes('emlak tipi') || lowerH.includes('ilgilen')) newMap.room_count = h;
+          else if (lowerH === 'il' || lowerH.includes('şehir') || lowerH.includes('yaşadığı')) newMap.current_location = h;
+          else if (lowerH.includes('bölge') || lowerH.includes('konum')) newMap.target_region = h;
+          else if (lowerH.includes('not') || lowerH.includes('açıklama')) newMap.notes = h;
+          else if (lowerH.includes('sonuç') || lowerH.includes('durum') || lowerH.includes('aksiyon')) newMap.warmth_outcome = h;
+          else if (lowerH.includes('randevu')) newMap.appointment_date = h;
+          else if (lowerH.includes('bütçe') || lowerH.includes('fiyat')) newMap.budget = h;
+        });
+        setColumnMap(newMap);
+      }
     } catch (err) {
       console.error(err);
       alert('Sayfa okunurken bir hata oluştu.');
@@ -141,33 +296,43 @@ export default function Home() {
         setExcelWorkbook(wb);
         setSheetNames(wb.SheetNames);
 
-        // Find the best sheet containing Lead data
+        // Find the best sheet
         let bestSheetName = wb.SheetNames[0];
-        for (const name of wb.SheetNames) {
-          const ws = wb.Sheets[name];
-          const data = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
-          
-          let hasName = false;
-          let hasPhone = false;
-          
-          // Check first 15 rows of the sheet
-          for (let i = 0; i < Math.min(data.length, 15); i++) {
-            const row = data[i] || [];
-            const nMatch = row.some(cell => {
-              const val = String(cell || '').toLowerCase();
-              return val.includes('isim') || val.includes('ad soyad') || val.includes('adısayadı');
-            });
-            const pMatch = row.some(cell => {
-              const val = String(cell || '').toLowerCase();
-              return val === 'tel' || val.includes('telefon') || val.includes('gsm');
-            });
-            if (nMatch) hasName = true;
-            if (pMatch) hasPhone = true;
-          }
+        if (importType === 'leads') {
+          for (const name of wb.SheetNames) {
+            const ws = wb.Sheets[name];
+            const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as any[][];
+            
+            let hasName = false;
+            let hasPhone = false;
+            
+            // Check first 15 rows of the sheet
+            for (let i = 0; i < Math.min(data.length, 15); i++) {
+              const row = data[i] || [];
+              const nMatch = row.some(cell => {
+                const val = String(cell || '').toLowerCase();
+                return val.includes('isim') || val.includes('ad soyad') || val.includes('adısayadı');
+              });
+              const pMatch = row.some(cell => {
+                const val = String(cell || '').toLowerCase();
+                return val === 'tel' || val.includes('telefon') || val.includes('gsm');
+              });
+              if (nMatch) hasName = true;
+              if (pMatch) hasPhone = true;
+            }
 
-          if (hasName && hasPhone) {
-            bestSheetName = name;
-            break;
+            if (hasName && hasPhone) {
+              bestSheetName = name;
+              break;
+            }
+          }
+        } else {
+          for (const name of wb.SheetNames) {
+            const lowerName = name.toLowerCase();
+            if (lowerName.includes('portfoy') || lowerName.includes('portföy') || lowerName.includes('daire') || lowerName.includes('envanter') || lowerName.includes('list')) {
+              bestSheetName = name;
+              break;
+            }
           }
         }
 
@@ -180,7 +345,141 @@ export default function Home() {
     reader.readAsBinaryString(file);
   };
 
+  const runPropertiesImport = async () => {
+    setImporting(true);
+    let imported = 0;
+    
+    // Helper to get column index with normalized keys
+    const getIndexByNormalizedKey = (headers: string[], keyName: string): number => {
+      const target = cleanStringForCompare(keyName);
+      for (let i = 0; i < headers.length; i++) {
+        const h = cleanStringForCompare(headers[i]);
+        if (h.includes(target) || target.includes(h)) {
+          return i;
+        }
+      }
+      return -1;
+    };
+
+    if (!excelWorkbook || !selectedSheet) {
+      alert('Seçili workbook veya sayfa bulunamadı.');
+      setImporting(false);
+      return;
+    }
+
+    try {
+      // Clear existing properties before importing a new spreadsheet to prevent duplicates
+      await StorageManager.clearProperties();
+
+      const parselIdx = getIndexByNormalizedKey(excelHeaders, 'parsel');
+      const bagBolNoIdx = getIndexByNormalizedKey(excelHeaders, 'bağböl') >= 0 
+        ? getIndexByNormalizedKey(excelHeaders, 'bağböl') 
+        : getIndexByNormalizedKey(excelHeaders, 'bagbol');
+      const katIdx = getIndexByNormalizedKey(excelHeaders, 'kat');
+      const kullAmaciIdx = getIndexByNormalizedKey(excelHeaders, 'kullamacı') >= 0
+        ? getIndexByNormalizedKey(excelHeaders, 'kullamacı')
+        : getIndexByNormalizedKey(excelHeaders, 'kullamaci');
+      const daireTipiIdx = getIndexByNormalizedKey(excelHeaders, 'dairetipi') >= 0
+        ? getIndexByNormalizedKey(excelHeaders, 'dairetipi')
+        : getIndexByNormalizedKey(excelHeaders, 'tip');
+      const kapaliAlanIdx = getIndexByNormalizedKey(excelHeaders, 'kapalıalan') >= 0
+        ? getIndexByNormalizedKey(excelHeaders, 'kapalıalan')
+        : getIndexByNormalizedKey(excelHeaders, 'kapalianlan');
+      const acikAlanIdx = getIndexByNormalizedKey(excelHeaders, 'açıkalan') >= 0
+        ? getIndexByNormalizedKey(excelHeaders, 'açıkalan')
+        : getIndexByNormalizedKey(excelHeaders, 'acikalan');
+      const netAlanIdx = getIndexByNormalizedKey(excelHeaders, 'netalan');
+      const brutAlanIdx = getIndexByNormalizedKey(excelHeaders, 'brütalan') >= 0
+        ? getIndexByNormalizedKey(excelHeaders, 'brütalan')
+        : getIndexByNormalizedKey(excelHeaders, 'brutalan');
+      const portfoyAdiIdx = getIndexByNormalizedKey(excelHeaders, 'portfoy');
+      const extraOzellikIdx = getIndexByNormalizedKey(excelHeaders, 'extra') >= 0
+        ? getIndexByNormalizedKey(excelHeaders, 'extra')
+        : getIndexByNormalizedKey(excelHeaders, 'özellik');
+      const portfoyKimdeIdx = getIndexByNormalizedKey(excelHeaders, 'kimde');
+      const priceIdx = getIndexByNormalizedKey(excelHeaders, 'fiyat');
+      const merdivenAlanIdx = getIndexByNormalizedKey(excelHeaders, 'merdiven');
+      const ortakAlanIdx = getIndexByNormalizedKey(excelHeaders, 'ortakalan');
+      const kapaliAcikAlanIdx = getIndexByNormalizedKey(excelHeaders, 'kapalı+açık');
+      const daireSahibiIdx = getIndexByNormalizedKey(excelHeaders, 'sahibi');
+
+      for (const row of excelRows) {
+        const parselVal = parselIdx >= 0 ? row[parselIdx] : undefined;
+        const bagBolNoVal = bagBolNoIdx >= 0 ? row[bagBolNoIdx] : undefined;
+
+        // If we don't have parsel and bag_bol_no, skip
+        if (parselVal === undefined || bagBolNoVal === undefined || String(parselVal).trim() === '' || String(bagBolNoVal).trim() === '') continue;
+
+        const katVal = katIdx >= 0 ? String(row[katIdx] || '') : '';
+        const kullAmaciVal = kullAmaciIdx >= 0 ? String(row[kullAmaciIdx] || '') : '';
+        const daireTipiVal = daireTipiIdx >= 0 ? String(row[daireTipiIdx] || '') : '1+1';
+        
+        const kapaliAlanVal = kapaliAlanIdx >= 0 ? Number(row[kapaliAlanIdx]) || 0 : 0;
+        const acikAlanVal = acikAlanIdx >= 0 ? Number(row[acikAlanIdx]) || 0 : 0;
+        const netAlanVal = netAlanIdx >= 0 ? Number(row[netAlanIdx]) || 0 : 0;
+        const brutAlanVal = brutAlanIdx >= 0 ? Number(row[brutAlanIdx]) || 0 : 0;
+        
+        const portfoyAdiVal = portfoyAdiIdx >= 0 ? String(row[portfoyAdiIdx] || '') : `${parselVal}_${bagBolNoVal}`;
+        const extraOzellikVal = extraOzellikIdx >= 0 ? String(row[extraOzellikIdx] || '') : '';
+        const portfoyKimdeVal = portfoyKimdeIdx >= 0 ? String(row[portfoyKimdeIdx] || '') : 'Kapalı';
+        
+        const rawPrice = priceIdx >= 0 ? row[priceIdx] : 0;
+        const priceVal = cleanPrice(rawPrice);
+
+        const merdivenAlanVal = merdivenAlanIdx >= 0 ? Number(row[merdivenAlanIdx]) || 0 : 0;
+        const ortakAlanVal = ortakAlanIdx >= 0 ? Number(row[ortakAlanIdx]) || 0 : 0;
+        const kapaliAcikAlanVal = kapaliAcikAlanIdx >= 0 ? Number(row[kapaliAcikAlanIdx]) || 0 : 0;
+        const daireSahibiVal = daireSahibiIdx >= 0 ? String(row[daireSahibiIdx] || '') : '';
+
+        const propId = crypto.randomUUID();
+        const newProp: Property = {
+          id: propId,
+          title: `Parsel ${parselVal} - Daire ${bagBolNoVal}`,
+          price: priceVal,
+          region: 'Öntaş Vadi Evleri',
+          type: kullAmaciVal || 'Mesken',
+          room_count: daireTipiVal,
+          parsel: String(parselVal),
+          bag_bol_no: String(bagBolNoVal),
+          kat: katVal,
+          kull_amaci: kullAmaciVal,
+          kapali_alan: kapaliAlanVal,
+          acik_alan: acikAlanVal,
+          net_alan: netAlanVal,
+          brut_alan: brutAlanVal,
+          portfoy_adi: portfoyAdiVal,
+          extra_ozellik: extraOzellikVal,
+          portfoy_kimde: portfoyKimdeVal,
+          merdiven_alan: merdivenAlanVal,
+          ortak_alan: ortakAlanVal,
+          kapali_acik_alan: kapaliAcikAlanVal,
+          daire_sahibi: daireSahibiVal,
+          created_at: new Date().toISOString()
+        };
+
+        await StorageManager.saveProperty(newProp);
+        imported++;
+      }
+
+      setImportCount(imported);
+      setImportSuccess(true);
+    } catch (err) {
+      console.error(err);
+      alert('Portföy içeri aktarılırken hata oluştu.');
+    } finally {
+      setImporting(false);
+      setExcelHeaders([]);
+      setExcelRows([]);
+      await loadAllData();
+    }
+  };
+
   const runImport = async () => {
+    if (importType === 'properties') {
+      await runPropertiesImport();
+      return;
+    }
+
     if (!columnMap.name || !columnMap.phone) {
       alert('Lütfen en azından "Adı Soyadı" ve "Telefon Numarası" kolonlarını eşleştirin.');
       return;
@@ -219,7 +518,9 @@ export default function Home() {
       let warmthVal: 'cold' | 'warm' | 'hot' = 'warm';
       if (warmthIdx >= 0) {
         const rawWarmth = String(row[warmthIdx] || '').toLowerCase();
-        if (rawWarmth.includes('red') || rawWarmth.includes('iptal') || rawWarmth.includes('olumsuz')) {
+        if (rawWarmth.includes('beklemede')) {
+          warmthVal = 'hot';
+        } else if (rawWarmth.includes('red') || rawWarmth.includes('iptal') || rawWarmth.includes('olumsuz')) {
           warmthVal = 'cold';
         } else if (rawWarmth.includes('randevu') || rawWarmth.includes('sıcak') || rawWarmth.includes('kapatıldı') || rawWarmth.includes('olumlu')) {
           warmthVal = 'hot';
@@ -239,10 +540,11 @@ export default function Home() {
         property_type: 'Daire', // Default
         room_count: roomCountVal || '2+1',
         purpose: 'Oturumluk',
+        customer_question: '',
+        lead_status: '',
+        rejection_reason: '',
         target_region: targetRegionVal,
         current_location: currentLocationVal,
-        marital_status: 'Evli',
-        occupation: '',
         budget: budgetVal,
         warmth: warmthVal,
         is_alert_active: true,
@@ -304,14 +606,18 @@ export default function Home() {
     property_type: 'Daire',
     room_count: '2+1',
     purpose: 'Oturumluk',
+    customer_question: '',
+    lead_status: '',
+    rejection_reason: '',
     target_region: '',
     current_location: '',
-    marital_status: 'Evli',
+    marital_status: '',
     occupation: '',
     budget: 0,
-    warmth: 'warm',
+    warmth: '' as any,
     is_alert_active: true,
     notes: '',
+    created_at: getTodayDateString(),
   });
 
   const [newApp, setNewApp] = useState<Partial<Appointment>>({
@@ -323,11 +629,26 @@ export default function Home() {
   });
 
   const [newProperty, setNewProperty] = useState<Partial<Property>>({
-    title: '',
-    price: 0,
-    region: '',
-    type: 'Daire',
+    parsel: '',
+    bag_bol_no: '',
     room_count: '2+1',
+    kat: '',
+    kull_amaci: 'Mesken',
+    kapali_alan: 0,
+    acik_alan: 0,
+    net_alan: 0,
+    brut_alan: 0,
+    portfoy_adi: '',
+    extra_ozellik: '',
+    portfoy_kimde: 'Açık',
+    price: 0,
+    region: 'Öntaş Vadi Evleri',
+    type: 'Daire',
+    title: '',
+    merdiven_alan: 0,
+    ortak_alan: 0,
+    kapali_acik_alan: 0,
+    daire_sahibi: ''
   });
 
   // Load Data
@@ -348,14 +669,29 @@ export default function Home() {
   };
 
   useEffect(() => {
-    loadAllData();
+    const initAndLoad = async () => {
+      // Run the warmth migration once to update database records for existing leads
+      if (typeof window !== 'undefined') {
+        const migrated = localStorage.getItem('fully-warmth-migrated-v1');
+        if (migrated !== 'true') {
+          try {
+            await runWarmthMigration();
+            localStorage.setItem('fully-warmth-migrated-v1', 'true');
+          } catch (err) {
+            console.error('Failed to run warmth migration on mount:', err);
+          }
+        }
+      }
+      loadAllData();
+    };
+    initAndLoad();
   }, []);
 
   // Save Lead
   const handleSaveLead = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLead.name || !newLead.phone) {
-      alert('Lütfen Ad ve Telefon numarası alanlarını doldurun.');
+    if (!newLead.name || !newLead.phone || !newLead.warmth) {
+      alert('Lütfen Ad, Telefon ve Sıcaklık Seviyesi (Warmth) alanlarını doldurun.');
       return;
     }
     const leadToSave: Lead = {
@@ -365,17 +701,20 @@ export default function Home() {
       email: newLead.email || '',
       source: newLead.source || 'Instagram',
       property_type: newLead.property_type || 'Daire',
-      room_count: newLead.room_count || '2+1',
+      room_count: newLead.room_count !== undefined ? newLead.room_count : '2+1',
       purpose: newLead.purpose || 'Oturumluk',
+      customer_question: newLead.customer_question || '',
+      lead_status: newLead.lead_status || '',
+      rejection_reason: newLead.rejection_reason || '',
       target_region: newLead.target_region || '',
       current_location: newLead.current_location || '',
-      marital_status: newLead.marital_status || 'Evli',
+      marital_status: newLead.marital_status || '',
       occupation: newLead.occupation || '',
       budget: Number(newLead.budget) || 0,
-      warmth: newLead.warmth as 'cold' | 'warm' | 'hot' || 'warm',
+      warmth: (newLead.lead_status === 'Beklemede' ? 'hot' : newLead.warmth) as 'cold' | 'warm' | 'hot',
       is_alert_active: newLead.is_alert_active !== undefined ? newLead.is_alert_active : true,
       notes: newLead.notes || '',
-      created_at: editingLead ? editingLead.created_at : new Date().toISOString(),
+      created_at: newLead.created_at ? new Date(newLead.created_at).toISOString() : new Date().toISOString(),
     };
 
     await StorageManager.saveLead(leadToSave);
@@ -391,14 +730,18 @@ export default function Home() {
       property_type: 'Daire',
       room_count: '2+1',
       purpose: 'Oturumluk',
+      customer_question: '',
+      lead_status: '',
+      rejection_reason: '',
       target_region: '',
       current_location: '',
-      marital_status: 'Evli',
+      marital_status: '',
       occupation: '',
       budget: 0,
-      warmth: 'warm',
+      warmth: '' as any,
       is_alert_active: true,
       notes: '',
+      created_at: getTodayDateString(),
     });
     setActiveTab('dashboard');
   };
@@ -406,7 +749,33 @@ export default function Home() {
   // Start Editing Lead
   const startEditLead = (lead: Lead) => {
     setEditingLead(lead);
-    setNewLead(lead);
+    
+    // Format created_at to YYYY-MM-DD for date input field
+    let formattedDate = getTodayDateString();
+    if (lead.created_at) {
+      try {
+        const d = new Date(lead.created_at);
+        // Avoid timezone shift if it represents UTC midnight (pure date)
+        if (typeof lead.created_at === 'string' && lead.created_at.includes('T00:00:00')) {
+          const year = d.getUTCFullYear();
+          const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+          const day = String(d.getUTCDate()).padStart(2, '0');
+          formattedDate = `${year}-${month}-${day}`;
+        } else {
+          const year = d.getFullYear();
+          const month = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          formattedDate = `${year}-${month}-${day}`;
+        }
+      } catch (err) {
+        console.error('Error parsing lead created_at:', err);
+      }
+    }
+
+    setNewLead({
+      ...lead,
+      created_at: formattedDate
+    });
     setActiveTab('add-lead');
   };
 
@@ -418,31 +787,183 @@ export default function Home() {
     }
   };
 
-  // Save Appointment
-  const handleSaveApp = async (e: React.FormEvent) => {
+  // Helper to find the best matching property for a lead using matchmaker logic
+  const getMatchedPropertyForLead = (lead: Lead): Property | null => {
+    if (!lead) return null;
+    const leadRoom = String(lead.room_count || '').trim().toLowerCase();
+    const budget = Number(lead.budget) || 0;
+    const maxFlexibleBudget = budget * 1.10; // +10% flexibility
+
+    const leadNotes = String(lead.notes || '').toLowerCase();
+    const leadRooms = leadRoom ? leadRoom.split(',').map(s => s.trim().toLowerCase()) : [];
+
+    const activeProps = (properties || []).filter(p => {
+      if (!p) return false;
+      const isClosed = String(p.portfoy_kimde || '').trim().toLowerCase() === 'kapalı';
+      if (isClosed) return false;
+      const price = Number(p.price) || 0;
+      if (price <= 0) return false;
+
+      // Keyword matching
+      if (leadNotes.includes('bahçe') || leadNotes.includes('bahceli') || leadNotes.includes('bahçeli')) {
+        const propExtra = String(p.extra_ozellik || '').toLowerCase();
+        const propTitle = String(p.title || '').toLowerCase();
+        const propHasGarden = propExtra.includes('bahçe') || propExtra.includes('bahçeli') || propExtra.includes('bahceli') ||
+                              propTitle.includes('bahçe') || propTitle.includes('bahçeli') || propTitle.includes('bahceli');
+        if (!propHasGarden) return false;
+      }
+      if (leadNotes.includes('dubleks') || leadNotes.includes('dublex')) {
+        const propExtra = String(p.extra_ozellik || '').toLowerCase();
+        const propTitle = String(p.title || '').toLowerCase();
+        const propType = String(p.type || '').toLowerCase();
+        const propKullAmaci = String(p.kull_amaci || '').toLowerCase();
+        const propHasDuplex = propExtra.includes('dubleks') || propExtra.includes('dublex') ||
+                              propTitle.includes('dubleks') || propTitle.includes('dublex') ||
+                              propType.includes('dubleks') || propType.includes('dublex') ||
+                              propKullAmaci.includes('dubleks') || propKullAmaci.includes('dublex');
+        if (!propHasDuplex) return false;
+      }
+      return true;
+    });
+
+    // Exact matches first
+    const exactMatches = activeProps.filter(p => {
+      const propRoom = String(p.room_count || '').trim().toLowerCase();
+      const price = Number(p.price) || 0;
+      const isRoomMatch = leadRooms.length === 0 || leadRooms.includes(propRoom);
+      return isRoomMatch && price <= budget;
+    });
+    if (exactMatches.length > 0) return exactMatches[0];
+
+    // Flexible matches next
+    const flexibleMatches = activeProps.filter(p => {
+      const propRoom = String(p.room_count || '').trim().toLowerCase();
+      const price = Number(p.price) || 0;
+      const isRoomMatch = leadRooms.length === 0 || leadRooms.includes(propRoom);
+      return isRoomMatch && price > budget && price <= maxFlexibleBudget;
+    });
+    if (flexibleMatches.length > 0) return flexibleMatches[0];
+
+    return null;
+  };
+
+  // Open creation modal
+  const openAddAppModal = (initialDate?: Date, initialHour?: number) => {
+    let dtStr = '';
+    const date = initialDate ? new Date(initialDate) : new Date();
+    if (initialHour !== undefined) {
+      date.setHours(initialHour);
+      date.setMinutes(0);
+    } else {
+      date.setHours(9);
+      date.setMinutes(0);
+    }
+    
+    // Format to local YYYY-MM-DDTHH:MM
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    dtStr = `${year}-${month}-${day}T${hours}:${minutes}`;
+
+    setAppDateTime(dtStr);
+    setAppLocation('Ofis / Yerinde Gösterim');
+    setAppNotes('');
+    setAppType(''); // Empty initially, user must select (required)
+    setAppStatusState('pending');
+    setSelectedLeadForApp(null);
+    setAppSearchQuery('');
+    setShowSearchDropdown(false);
+    setShowAddAppModal(true);
+  };
+
+  // Open edit modal
+  const openEditAppModal = (app: Appointment) => {
+    setSelectedAppToEdit(app);
+    setAppDateTime(app.date_time);
+    setAppLocation(app.location || '');
+    setAppNotes(app.notes || '');
+    setAppType(app.appointment_type || '');
+    setAppStatusState(app.status);
+    
+    const lead = leads.find(l => l.id === app.lead_id);
+    setSelectedLeadForApp(lead || null);
+    setAppSearchQuery(lead ? `${lead.name} (${lead.phone})` : '');
+    setShowSearchDropdown(false);
+    setShowEditAppModal(true);
+  };
+
+  // Navigate Calendar date
+  const navigateCalendar = (dir: number) => {
+    const newDate = new Date(calendarDate);
+    if (calendarView === 'month') {
+      newDate.setMonth(newDate.getMonth() + dir);
+    } else if (calendarView === 'week') {
+      newDate.setDate(newDate.getDate() + (dir * 7));
+    } else {
+      newDate.setDate(newDate.getDate() + dir);
+    }
+    setCalendarDate(newDate);
+  };
+
+  // Calendar title helper
+  const getCalendarTitle = () => {
+    const monthNames = [
+      'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+      'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
+    ];
+    if (calendarView === 'month') {
+      return `${monthNames[calendarDate.getMonth()]} ${calendarDate.getFullYear()}`;
+    } else if (calendarView === 'week') {
+      const start = new Date(calendarDate);
+      const day = start.getDay();
+      const diff = start.getDate() - day + (day === 0 ? -6 : 1);
+      start.setDate(diff);
+      
+      const end = new Date(start);
+      end.setDate(end.getDate() + 6);
+      
+      if (start.getMonth() === end.getMonth()) {
+        return `${start.getDate()} - ${end.getDate()} ${monthNames[start.getMonth()]} ${start.getFullYear()}`;
+      } else if (start.getFullYear() === end.getFullYear()) {
+        return `${start.getDate()} ${monthNames[start.getMonth()]} - ${end.getDate()} ${monthNames[end.getMonth()]} ${start.getFullYear()}`;
+      } else {
+        return `${start.getDate()} ${monthNames[start.getMonth()]} ${start.getFullYear()} - ${end.getDate()} ${monthNames[end.getMonth()]} ${end.getFullYear()}`;
+      }
+    } else {
+      return `${calendarDate.getDate()} ${monthNames[calendarDate.getMonth()]} ${calendarDate.getFullYear()}`;
+    }
+  };
+
+  // Save or Update Appointment from Modal
+  const handleSaveAppModalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newApp.lead_id || !newApp.date_time) {
+    if (!selectedLeadForApp || !appDateTime) {
       alert('Lütfen Müşteri ve Tarih/Saat alanlarını doldurun.');
       return;
     }
+    if (!appType) {
+      alert('Lütfen Randevu Tipi seçin.');
+      return;
+    }
     const appToSave: Appointment = {
-      id: crypto.randomUUID(),
-      lead_id: newApp.lead_id,
-      date_time: newApp.date_time,
-      location: newApp.location || '',
-      status: 'pending',
-      notes: newApp.notes || '',
+      id: selectedAppToEdit ? selectedAppToEdit.id : crypto.randomUUID(),
+      lead_id: selectedLeadForApp.id,
+      date_time: appDateTime,
+      location: appLocation,
+      status: appStatus,
+      notes: appNotes,
+      appointment_type: appType,
     };
     await StorageManager.saveAppointment(appToSave);
     await loadAllData();
-
-    setNewApp({
-      lead_id: '',
-      date_time: '',
-      location: '',
-      status: 'pending',
-      notes: '',
-    });
+    
+    // Close & reset
+    setShowAddAppModal(false);
+    setShowEditAppModal(false);
+    setSelectedAppToEdit(null);
+    setSelectedLeadForApp(null);
   };
 
   // Change Appointment Status
@@ -452,40 +973,483 @@ export default function Home() {
     loadAllData();
   };
 
-  // Delete Appointment
+  // Delete Appointment with Double Confirmation
   const handleDeleteApp = async (id: string) => {
     if (confirm('Bu randevuyu silmek istediğinizden emin misiniz?')) {
-      await StorageManager.deleteAppointment(id);
-      loadAllData();
+      if (confirm('DİKKAT: Randevu tamamen silinecektir. Devam etmek istediğinizden emin misiniz?')) {
+        await StorageManager.deleteAppointment(id);
+        loadAllData();
+        setShowEditAppModal(false);
+        setSelectedAppToEdit(null);
+      }
     }
+  };
+
+  // Hover Popover details helper
+  const renderHoverCard = (a: Appointment) => {
+    const lead = leads.find(l => l.id === a.lead_id);
+    const matchedProp = lead ? getMatchedPropertyForLead(lead) : null;
+    return (
+      <div className="tooltip-content" style={{
+        position: 'absolute',
+        bottom: '110%',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: '290px',
+        background: 'var(--bg-secondary)',
+        border: '1px solid var(--glass-border)',
+        borderRadius: '8px',
+        padding: '0.85rem',
+        boxShadow: 'var(--shadow-card)',
+        zIndex: 1000,
+        pointerEvents: 'none',
+        fontSize: '0.8rem',
+        color: 'var(--text-secondary)',
+        display: hoveredAppId === a.id ? 'block' : 'none',
+        textAlign: 'left',
+        whiteSpace: 'normal'
+      }}>
+        <h5 style={{ fontWeight: 800, color: 'var(--text-primary)', marginBottom: '0.4rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.2rem', display: 'flex', justifyContent: 'space-between' }}>
+          <span>Randevu Detayı</span>
+          {a.appointment_type && <span style={{ fontSize: '0.65rem', color: 'var(--color-primary)' }}>{a.appointment_type}</span>}
+        </h5>
+        <p style={{ marginBottom: '0.25rem', color: 'var(--text-primary)' }}>👤 <strong>İsim Soyisim:</strong> {a.lead_name}</p>
+        {lead && (
+          <>
+            <p style={{ marginBottom: '0.25rem' }}>📞 <strong>Telefon:</strong> {lead.phone}</p>
+            <p style={{ marginBottom: '0.25rem' }}>🏠 <strong>Talep Ettiği Daire:</strong> {lead.room_count || 'Belirtilmedi'} Oda ({lead.property_type || 'Belirtilmedi'})</p>
+            {matchedProp ? (
+              <div style={{ marginTop: '0.4rem', paddingTop: '0.4rem', borderTop: '1px dotted var(--glass-border)' }}>
+                <p style={{ color: 'var(--color-primary)', fontWeight: 700, marginBottom: '0.2rem', fontSize: '0.75rem' }}>🎯 Eşleşen Daire:</p>
+                <p style={{ marginBottom: '0.15rem', color: 'var(--text-primary)' }}>🏢 <strong>Parsel:</strong> {matchedProp.parsel || '-'} / <strong>Daire No:</strong> {matchedProp.bag_bol_no || '-'}</p>
+                <p style={{ color: 'var(--color-success)', fontWeight: 700, fontSize: '0.85rem' }}>💰 <strong>Daire Fiyatı (DB):</strong> {formatCurrency(matchedProp.price)}</p>
+              </div>
+            ) : (
+              <p style={{ fontStyle: 'italic', marginTop: '0.4rem', color: 'var(--text-muted)', fontSize: '0.7rem' }}>⚠️ Bütçeye/Odaya uygun eşleşen daire bulunamadı.</p>
+            )}
+          </>
+        )}
+        {a.notes && (
+          <p style={{ marginTop: '0.4rem', background: 'rgba(0,0,0,0.15)', padding: '0.3rem', borderRadius: '4px', fontStyle: 'italic', fontSize: '0.75rem' }}>
+            📝 Not: {a.notes}
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  // Calendar render functions
+  const renderMonthView = () => {
+    const startOfMonth = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1);
+    const endOfMonth = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0);
+    const daysInMonth = endOfMonth.getDate();
+    
+    let startDayIdx = startOfMonth.getDay();
+    startDayIdx = startDayIdx === 0 ? 6 : startDayIdx - 1;
+    
+    const cells: { date: Date; isCurrentMonth: boolean }[] = [];
+    const prevMonthEnd = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 0).getDate();
+    for (let i = startDayIdx - 1; i >= 0; i--) {
+      cells.push({
+        date: new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1, prevMonthEnd - i),
+        isCurrentMonth: false
+      });
+    }
+    
+    for (let i = 1; i <= daysInMonth; i++) {
+      cells.push({
+        date: new Date(calendarDate.getFullYear(), calendarDate.getMonth(), i),
+        isCurrentMonth: true
+      });
+    }
+    
+    const totalCells = cells.length > 35 ? 42 : 35;
+    const nextMonthPadding = totalCells - cells.length;
+    for (let i = 1; i <= nextMonthPadding; i++) {
+      cells.push({
+        date: new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, i),
+        isCurrentMonth: false
+      });
+    }
+
+    const weekDays = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '8px' }}>
+          {weekDays.map(wd => (
+            <div key={wd} style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)', padding: '0.4rem' }}>
+              {wd}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', background: 'var(--glass-border)', padding: '4px', borderRadius: '8px' }}>
+          {cells.map((cell, idx) => {
+            const dateKey = cell.date.toDateString();
+            const dayApps = appointments.filter(a => isSameDay(cell.date, a.date_time));
+            const isToday = new Date().toDateString() === dateKey;
+
+            return (
+              <div 
+                key={idx}
+                onClick={() => openAddAppModal(cell.date)}
+                style={{
+                  minHeight: '120px',
+                  background: isToday ? 'rgba(255, 106, 0, 0.05)' : cell.isCurrentMonth ? 'var(--bg-secondary)' : 'rgba(255,255,255,0.01)',
+                  border: isToday ? '1px solid var(--color-primary)' : '1px solid var(--glass-border)',
+                  borderRadius: '6px',
+                  padding: '0.5rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.35rem',
+                  cursor: 'pointer',
+                  position: 'relative'
+                }}
+              >
+                <span style={{ 
+                  fontSize: '0.85rem', 
+                  fontWeight: isToday ? 800 : 500, 
+                  color: isToday ? 'var(--color-primary)' : cell.isCurrentMonth ? 'var(--text-primary)' : 'var(--text-muted)' 
+                }}>
+                  {cell.date.getDate()}
+                </span>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }} onClick={(e) => e.stopPropagation()}>
+                  {dayApps.slice(0, 3).map(a => (
+                    <div 
+                      key={a.id}
+                      onClick={() => openEditAppModal(a)}
+                      onMouseEnter={() => setHoveredAppId(a.id)}
+                      onMouseLeave={() => setHoveredAppId(null)}
+                      style={{
+                        padding: '0.25rem 0.4rem',
+                        borderRadius: '4px',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        background: a.status === 'completed' ? 'rgba(16, 185, 129, 0.15)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                        color: a.status === 'completed' ? 'var(--color-success)' : a.status === 'cancelled' ? 'var(--color-danger)' : 'var(--color-warning)',
+                        border: `1px solid ${a.status === 'completed' ? 'rgba(16, 185, 129, 0.25)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        position: 'relative'
+                      }}
+                    >
+                      {new Date(a.date_time).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} - {a.lead_name}
+                      {renderHoverCard(a)}
+                    </div>
+                  ))}
+                  {dayApps.length > 3 && (
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                      +{dayApps.length - 3} randevu daha
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  const renderWeekView = () => {
+    const startOfWeek = new Date(calendarDate);
+    const day = startOfWeek.getDay();
+    const diff = startOfWeek.getDate() - day + (day === 0 ? -6 : 1);
+    startOfWeek.setDate(diff);
+
+    const weekDays: Date[] = [];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(startOfWeek);
+      d.setDate(d.getDate() + i);
+      weekDays.push(d);
+    }
+
+    const hours: number[] = [];
+    for (let i = 8; i <= 20; i++) {
+      hours.push(i);
+    }
+
+    const weekDayNames = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%', overflowX: 'auto' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '80px repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '8px', minWidth: '800px' }}>
+          <div></div>
+          {weekDays.map((wd, idx) => {
+            const isToday = new Date().toDateString() === wd.toDateString();
+            return (
+              <div key={idx} style={{ 
+                padding: '0.5rem', 
+                background: isToday ? 'rgba(255, 106, 0, 0.05)' : 'transparent',
+                borderRadius: '6px',
+                border: isToday ? '1px solid var(--color-primary)' : 'none'
+              }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 500 }}>{weekDayNames[idx]}</div>
+                <div style={{ fontSize: '1.1rem', fontWeight: 800, color: isToday ? 'var(--color-primary)' : 'var(--text-primary)' }}>{wd.getDate()}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: 'var(--glass-border)', padding: '4px', borderRadius: '8px', minWidth: '800px' }}>
+          {hours.map(hour => (
+            <div key={hour} style={{ display: 'grid', gridTemplateColumns: '80px repeat(7, 1fr)', gap: '4px', alignItems: 'stretch' }}>
+              <div style={{ 
+                fontSize: '0.8rem', 
+                color: 'var(--text-secondary)', 
+                textAlign: 'right', 
+                paddingRight: '0.75rem', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'flex-end',
+                height: '60px',
+                background: 'rgba(255,255,255,0.01)'
+              }}>
+                {String(hour).padStart(2, '0')}:00
+              </div>
+              
+              {weekDays.map((wd, dayIdx) => {
+                const hourApps = appointments.filter(a => {
+                  try {
+                    const ad = new Date(a.date_time);
+                    return ad.toDateString() === wd.toDateString() && ad.getHours() === hour;
+                  } catch {
+                    return false;
+                  }
+                });
+
+                return (
+                  <div 
+                    key={dayIdx}
+                    onClick={() => openAddAppModal(wd, hour)}
+                    style={{
+                      height: '60px',
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--glass-border)',
+                      borderRadius: '4px',
+                      padding: '0.25rem',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.2rem',
+                      overflowY: 'auto'
+                    }}
+                  >
+                    {hourApps.map(a => (
+                      <div 
+                        key={a.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditAppModal(a);
+                        }}
+                        onMouseEnter={() => setHoveredAppId(a.id)}
+                        onMouseLeave={() => setHoveredAppId(null)}
+                        style={{
+                          padding: '0.15rem 0.3rem',
+                          borderRadius: '3px',
+                          fontSize: '0.7rem',
+                          fontWeight: 600,
+                          background: a.status === 'completed' ? 'rgba(16, 185, 129, 0.15)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                          color: a.status === 'completed' ? 'var(--color-success)' : a.status === 'cancelled' ? 'var(--color-danger)' : 'var(--color-warning)',
+                          border: `1px solid ${a.status === 'completed' ? 'rgba(16, 185, 129, 0.25)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          position: 'relative'
+                        }}
+                      >
+                        {new Date(a.date_time).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} - {a.lead_name}
+                        {renderHoverCard(a)}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderDayView = () => {
+    const hours: number[] = [];
+    for (let i = 8; i <= 20; i++) {
+      hours.push(i);
+    }
+    const isToday = new Date().toDateString() === calendarDate.toDateString();
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+        <div style={{ 
+          padding: '0.75rem', 
+          background: isToday ? 'rgba(255, 106, 0, 0.05)' : 'rgba(255,255,255,0.02)',
+          borderRadius: '8px',
+          border: isToday ? '1px solid var(--color-primary)' : '1px solid var(--glass-border)',
+          textAlign: 'center',
+          marginBottom: '1rem'
+        }}>
+          <h4 style={{ fontWeight: 800, fontSize: '1.25rem', color: isToday ? 'var(--color-primary)' : 'var(--text-primary)' }}>
+            {calendarDate.toLocaleDateString('tr-TR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          </h4>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', background: 'var(--glass-border)', padding: '4px', borderRadius: '8px' }}>
+          {hours.map(hour => {
+            const hourApps = appointments.filter(a => {
+              try {
+                const ad = new Date(a.date_time);
+                return ad.toDateString() === calendarDate.toDateString() && ad.getHours() === hour;
+              } catch {
+                return false;
+              }
+            });
+
+            return (
+              <div key={hour} style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: '4px', alignItems: 'stretch' }}>
+                <div style={{ 
+                  fontSize: '0.8rem', 
+                  color: 'var(--text-secondary)', 
+                  textAlign: 'right', 
+                  paddingRight: '0.75rem', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'flex-end',
+                  height: '60px',
+                  background: 'rgba(255,255,255,0.01)'
+                }}>
+                  {String(hour).padStart(2, '0')}:00
+                </div>
+
+                <div 
+                  onClick={() => openAddAppModal(calendarDate, hour)}
+                  style={{
+                    height: '60px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--glass-border)',
+                    borderRadius: '4px',
+                    padding: '0.4rem',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    overflowX: 'auto'
+                  }}
+                >
+                  {hourApps.map(a => (
+                    <div 
+                      key={a.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEditAppModal(a);
+                      }}
+                      onMouseEnter={() => setHoveredAppId(a.id)}
+                      onMouseLeave={() => setHoveredAppId(null)}
+                      style={{
+                        padding: '0.35rem 0.75rem',
+                        borderRadius: '4px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        background: a.status === 'completed' ? 'rgba(16, 185, 129, 0.15)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                        color: a.status === 'completed' ? 'var(--color-success)' : a.status === 'cancelled' ? 'var(--color-danger)' : 'var(--color-warning)',
+                        border: `1px solid ${a.status === 'completed' ? 'rgba(16, 185, 129, 0.25)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        position: 'relative',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      <strong style={{ borderRight: '1px solid rgba(255,255,255,0.1)', paddingRight: '0.4rem' }}>
+                        {new Date(a.date_time).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+                      </strong>
+                      <span>{a.lead_name}</span>
+                      {a.appointment_type && (
+                        <span style={{ fontSize: '0.7rem', opacity: 0.8, background: 'rgba(255,255,255,0.1)', padding: '0.1rem 0.3rem', borderRadius: '3px' }}>
+                          {a.appointment_type}
+                        </span>
+                      )}
+                      {renderHoverCard(a)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
   };
 
   // Save Property
   const handleSaveProperty = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProperty.title || !newProperty.price) {
-      alert('Lütfen Mülk Başlığı ve Fiyat alanlarını doldurun.');
+    if (!newProperty.parsel || !newProperty.bag_bol_no) {
+      alert('Lütfen Parsel ve Bağımsız Bölüm No alanlarını doldurun.');
       return;
     }
     const propToSave: Property = {
       id: crypto.randomUUID(),
-      title: newProperty.title,
+      title: newProperty.title || `Parsel ${newProperty.parsel} - Daire ${newProperty.bag_bol_no}`,
       price: Number(newProperty.price) || 0,
-      region: newProperty.region || '',
-      type: newProperty.type || 'Daire',
+      region: newProperty.region || 'Öntaş Vadi Evleri',
+      type: newProperty.kull_amaci || 'Mesken',
       room_count: newProperty.room_count || '2+1',
+      parsel: String(newProperty.parsel),
+      bag_bol_no: String(newProperty.bag_bol_no),
+      kat: newProperty.kat || '',
+      kull_amaci: newProperty.kull_amaci || 'Mesken',
+      kapali_alan: Number(newProperty.kapali_alan) || 0,
+      acik_alan: Number(newProperty.acik_alan) || 0,
+      net_alan: Number(newProperty.net_alan) || 0,
+      brut_alan: Number(newProperty.brut_alan) || 0,
+      portfoy_adi: newProperty.portfoy_adi || `${newProperty.parsel}_${newProperty.bag_bol_no}`,
+      extra_ozellik: newProperty.extra_ozellik || '',
+      portfoy_kimde: newProperty.portfoy_kimde || 'Açık',
+      merdiven_alan: Number(newProperty.merdiven_alan) || 0,
+      ortak_alan: Number(newProperty.ortak_alan) || 0,
+      kapali_acik_alan: Number(newProperty.kapali_acik_alan) || 0,
+      daire_sahibi: newProperty.daire_sahibi || '',
       created_at: new Date().toISOString(),
     };
     await StorageManager.saveProperty(propToSave);
     await loadAllData();
+    setShowAddPropForm(false);
 
     setNewProperty({
-      title: '',
-      price: 0,
-      region: '',
-      type: 'Daire',
+      parsel: '',
+      bag_bol_no: '',
       room_count: '2+1',
+      kat: '',
+      kull_amaci: 'Mesken',
+      kapali_alan: 0,
+      acik_alan: 0,
+      net_alan: 0,
+      brut_alan: 0,
+      portfoy_adi: '',
+      extra_ozellik: '',
+      portfoy_kimde: 'Açık',
+      price: 0,
+      region: 'Öntaş Vadi Evleri',
+      type: 'Daire',
+      title: '',
+      merdiven_alan: 0,
+      ortak_alan: 0,
+      kapali_acik_alan: 0,
+      daire_sahibi: ''
     });
+  };
+
+  // Inline update for properties
+  const handleInlinePropertyUpdate = async (prop: Property, field: keyof Property, value: any) => {
+    const updated = {
+      ...prop,
+      [field]: field === 'price' ? (Number(value) || 0) : value
+    };
+    await StorageManager.saveProperty(updated);
+    await loadAllData();
   };
 
   // Delete Property
@@ -542,11 +1506,14 @@ export default function Home() {
   };
 
   // Filter leads by search query
-  const filteredLeads = leads.filter(l => 
-    l.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    (l.phone && l.phone.includes(searchQuery)) ||
-    (l.target_region && l.target_region.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredLeads = (leads || []).filter(l => {
+    if (!l) return false;
+    const name = l.name ? String(l.name).toLowerCase() : '';
+    const phone = l.phone ? String(l.phone) : '';
+    const targetRegion = l.target_region ? String(l.target_region).toLowerCase() : '';
+    const query = searchQuery ? searchQuery.toLowerCase() : '';
+    return name.includes(query) || phone.includes(query) || targetRegion.includes(query);
+  });
 
   // Split leads by warmth for CRM columns
   const coldLeads = filteredLeads.filter(l => l.warmth === 'cold');
@@ -554,57 +1521,15 @@ export default function Home() {
   const hotLeads = filteredLeads.filter(l => l.warmth === 'hot');
 
   // Format currency helper
-  const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(val);
+  const formatCurrency = (val: any) => {
+    const num = Number(val);
+    if (isNaN(num) || num === 0) return '0 TL';
+    const sign = num < 0 ? '-' : '';
+    const formatted = String(Math.round(Math.abs(num))).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return `${sign}${formatted} TL`;
   };
 
-  // Generate date points for the last 10 days
-  const chartDays = Array.from({ length: 10 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - (9 - i));
-    return d;
-  });
 
-  const getChartDataPoints = () => {
-    return chartDays.map(day => {
-      const dateStr = day.toISOString().split('T')[0];
-      let count = 0;
-
-      if (selectedMetric === 'total') {
-        const matching = leads.filter(l => l.created_at && l.created_at.split('T')[0] === dateStr);
-        count = chartType === 'combined' ? matching.length : matching.filter(l => l.warmth === 'hot').length;
-      } else if (selectedMetric === 'hot') {
-        const matching = leads.filter(l => l.created_at && l.created_at.split('T')[0] === dateStr && l.warmth === 'hot');
-        count = matching.length;
-      } else if (selectedMetric === 'appointments') {
-        const matching = appointments.filter(a => a.date_time && a.date_time.split('T')[0] === dateStr);
-        count = chartType === 'combined' ? matching.length : matching.filter(a => a.status === 'completed').length;
-      } else if (selectedMetric === 'properties') {
-        const matching = properties.filter(p => p.created_at && p.created_at.split('T')[0] === dateStr);
-        count = matching.length;
-      }
-
-      return {
-        label: day.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' }),
-        count
-      };
-    });
-  };
-
-  const chartData = getChartDataPoints();
-  const counts = chartData.map(d => d.count);
-  const maxCount = Math.max(...counts, 4);
-
-  const points = chartData.map((d, i) => {
-    const x = 40 + i * (440 / 9);
-    const y = 170 - (d.count / maxCount) * 140;
-    return { x, y, ...d };
-  });
-
-  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-  const areaPath = points.length > 0 
-    ? `${linePath} L ${points[points.length - 1].x} 170 L ${points[0].x} 170 Z` 
-    : '';
 
   return (
     <div className="app-container">
@@ -654,6 +1579,28 @@ export default function Home() {
           </div>
         ) : (
           <main className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '2rem', width: '100%' }}>
+            {/* Dashboard Header with Genel Rapor button */}
+            {activeTab === 'dashboard' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.25rem' }}>
+                <div>
+                  <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff', margin: 0 }}>
+                    CRM Paneli
+                  </h2>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                    Müşteri takibi ve satış aktiviteleri genel görünümü
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setActiveTab('reports')}
+                  className="glow-btn"
+                  style={{ gap: '0.5rem' }}
+                >
+                  <BarChart3 size={18} />
+                  Genel Rapor
+                </button>
+              </div>
+            )}
+
             {/* Quick Stats Banner */}
             {activeTab === 'dashboard' && (
               <div className="stats-cards-row">
@@ -695,9 +1642,9 @@ export default function Home() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                       <Heart size={16} style={{ color: selectedMetric === 'hot' ? 'var(--color-primary)' : 'var(--text-secondary)' }} />
-                      Sıcak Takip (Hot)
+                      Hot
                     </span>
-                    <span title="Sıcak takip kategorisindeki yüksek potansiyelli müşteriler" style={{ display: 'inline-flex', cursor: 'help' }}><Info size={14} style={{ color: 'var(--text-muted)' }} /></span>
+                    <span title="Hot takip kategorisindeki yüksek potansiyelli müşteriler" style={{ display: 'inline-flex', cursor: 'help' }}><Info size={14} style={{ color: 'var(--text-muted)' }} /></span>
                   </div>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
@@ -765,127 +1712,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* Chart Section */}
-            {activeTab === 'dashboard' && (
-              <div className="glass-panel chart-container-card animate-fade-in" style={{ marginTop: '0rem' }}>
-                <div className="chart-header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-                  <div>
-                    <h3 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <BarChart3 size={18} style={{ color: 'var(--color-primary)' }} />
-                      {selectedMetric === 'total' && 'Müşteri Kayıt Eğilimi'}
-                      {selectedMetric === 'hot' && 'Sıcak Takip Eğilimi'}
-                      {selectedMetric === 'appointments' && 'Randevu Yoğunluk Eğilimi'}
-                      {selectedMetric === 'properties' && 'Portföy Giriş Eğilimi'}
-                    </h3>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
-                      Son 10 güne ait veri yoğunluğu trend grafiği
-                    </p>
-                  </div>
-                  
-                  {/* Combined / Individual Toggle button mirroring Peeksy */}
-                  {(selectedMetric === 'total' || selectedMetric === 'appointments') && (
-                    <div className="chart-toggle-group">
-                      <button 
-                        onClick={() => setChartType('combined')}
-                        className={`chart-toggle-btn ${chartType === 'combined' ? 'active' : ''}`}
-                      >
-                        Genel Rapor
-                      </button>
-                      <button 
-                        onClick={() => setChartType('individual')}
-                        className={`chart-toggle-btn ${chartType === 'individual' ? 'active' : ''}`}
-                      >
-                        {selectedMetric === 'total' ? 'Sadece Sıcaklar' : 'Sadece Tamamlananlar'}
-                      </button>
-                    </div>
-                  )}
-                </div>
 
-                {/* SVG Curve Graph */}
-                <div className="svg-chart-wrapper" style={{ position: 'relative', width: '100%', height: '200px' }}>
-                  <svg width="100%" height="100%" viewBox="0 0 500 200" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
-                    <defs>
-                      <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--color-primary)" stopOpacity="0.25" />
-                        <stop offset="100%" stopColor="var(--color-primary)" stopOpacity="0.0" />
-                      </linearGradient>
-                    </defs>
-
-                    {/* Horizontal Grids */}
-                    <line x1="40" y1="30" x2="480" y2="30" stroke="rgba(255,255,255,0.04)" strokeDasharray="3 3" />
-                    <line x1="40" y1="100" x2="480" y2="100" stroke="rgba(255,255,255,0.04)" strokeDasharray="3 3" />
-                    <line x1="40" y1="170" x2="480" y2="170" stroke="rgba(255,255,255,0.06)" />
-
-                    {/* Y-Axis Labels */}
-                    <text x="20" y="34" fill="var(--text-secondary)" opacity="0.6" fontSize="9" fontWeight="600" textAnchor="end">{maxCount}</text>
-                    <text x="20" y="104" fill="var(--text-secondary)" opacity="0.6" fontSize="9" fontWeight="600" textAnchor="end">{Math.round(maxCount / 2)}</text>
-                    <text x="20" y="174" fill="var(--text-secondary)" opacity="0.6" fontSize="9" fontWeight="600" textAnchor="end">0</text>
-
-                    {/* Area fill path under line */}
-                    {areaPath && <path d={areaPath} fill="url(#chartGradient)" />}
-
-                    {/* Line path */}
-                    {linePath && (
-                      <path 
-                        d={linePath} 
-                        fill="none" 
-                        stroke="var(--color-primary)" 
-                        strokeWidth="2.5" 
-                        strokeLinecap="round" 
-                        strokeLinejoin="round" 
-                      />
-                    )}
-
-                    {/* Data Points Dots */}
-                    {points.map((p, i) => (
-                      <g key={i}>
-                        <circle 
-                          cx={p.x} 
-                          cy={p.y} 
-                          r="4" 
-                          fill="#0b0d13" 
-                          stroke="var(--color-primary)" 
-                          strokeWidth="2" 
-                        />
-                        <circle 
-                          cx={p.x} 
-                          cy={p.y} 
-                          r="10" 
-                          fill="transparent" 
-                          style={{ cursor: 'pointer' }}
-                        >
-                          <title>{`${p.label}: ${p.count} adet`}</title>
-                        </circle>
-                        {/* Count text label above dot */}
-                        {p.count > 0 && (
-                          <text 
-                            x={p.x} 
-                            y={p.y - 10} 
-                            fill="var(--text-primary)" 
-                            fontSize="9" 
-                            fontWeight="800" 
-                            textAnchor="middle"
-                          >
-                            {p.count}
-                          </text>
-                        )}
-                        {/* X-Axis labels */}
-                        <text 
-                          x={p.x} 
-                          y="190" 
-                          fill="var(--text-secondary)" 
-                          fontSize="9" 
-                          fontWeight="500" 
-                          textAnchor="middle"
-                        >
-                          {p.label}
-                        </text>
-                      </g>
-                    ))}
-                  </svg>
-                </div>
-              </div>
-            )}
 
           {/* TAB CONTENT: DASHBOARD */}
           {activeTab === 'dashboard' && (
@@ -926,7 +1753,7 @@ export default function Home() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                     <h3 style={{ fontSize: '1.1rem', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-danger)' }}>
                       <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--color-danger)' }}></span>
-                      Sıcak Takip (Hot)
+                      Hot
                     </h3>
                     <span className="badge badge-hot">{hotLeads.length}</span>
                   </div>
@@ -934,7 +1761,7 @@ export default function Home() {
                     {hotLeads.length === 0 ? (
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '2rem 0' }}>Müşteri bulunmuyor.</p>
                     ) : (
-                      hotLeads.map(l => renderLeadCard(l))
+                      hotLeads.filter(Boolean).map(l => renderLeadCard(l))
                     )}
                   </div>
                 </div>
@@ -944,7 +1771,7 @@ export default function Home() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                     <h3 style={{ fontSize: '1.1rem', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-warning)' }}>
                       <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--color-warning)' }}></span>
-                      Potansiyel (Warm)
+                      Warm
                     </h3>
                     <span className="badge badge-warm">{warmLeads.length}</span>
                   </div>
@@ -952,7 +1779,7 @@ export default function Home() {
                     {warmLeads.length === 0 ? (
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '2rem 0' }}>Müşteri bulunmuyor.</p>
                     ) : (
-                      warmLeads.map(l => renderLeadCard(l))
+                      warmLeads.filter(Boolean).map(l => renderLeadCard(l))
                     )}
                   </div>
                 </div>
@@ -962,7 +1789,7 @@ export default function Home() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
                     <h3 style={{ fontSize: '1.1rem', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#60a5fa' }}>
                       <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#3b82f6' }}></span>
-                      Bilgi Alındı (Cold)
+                      Cold
                     </h3>
                     <span className="badge badge-cold">{coldLeads.length}</span>
                   </div>
@@ -970,7 +1797,7 @@ export default function Home() {
                     {coldLeads.length === 0 ? (
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '2rem 0' }}>Müşteri bulunmuyor.</p>
                     ) : (
-                      coldLeads.map(l => renderLeadCard(l))
+                      coldLeads.filter(Boolean).map(l => renderLeadCard(l))
                     )}
                   </div>
                 </div>
@@ -991,8 +1818,9 @@ export default function Home() {
                       setEditingLead(null);
                       setNewLead({
                         name: '', phone: '', email: '', source: 'Instagram', property_type: 'Daire',
-                        room_count: '2+1', purpose: 'Oturumluk', target_region: '', current_location: '',
-                        marital_status: 'Evli', occupation: '', budget: 0, warmth: 'warm', is_alert_active: true, notes: '',
+                        room_count: '2+1', purpose: 'Oturumluk', customer_question: '', lead_status: '', rejection_reason: '', target_region: '', current_location: '',
+                        marital_status: '', occupation: '', budget: 0, warmth: '' as any, is_alert_active: true, notes: '',
+                        created_at: getTodayDateString(),
                       });
                       setActiveTab('dashboard');
                     }}
@@ -1055,31 +1883,38 @@ export default function Home() {
                         <option value="Referans">Referans</option>
                         <option value="Telefon">Telefon Görüşmesi</option>
                         <option value="Acenta Ofis">Fiziksel Ofis</option>
+                        <option value="Müteahhit Yönlendirmesi">Müteahhit Yönlendirmesi</option>
+                        <option value="ajans">Ajans</option>
                       </select>
                     </div>
 
                     <div className="form-group">
-                      <label>Sıcaklık Seviyesi (Warmth)</label>
+                      <label>Sıcaklık Seviyesi (Warmth) *</label>
                       <select 
+                        required
                         className="form-control"
-                        value={newLead.warmth}
+                        value={newLead.warmth || ''}
                         onChange={(e) => setNewLead({ ...newLead, warmth: e.target.value as any })}
                       >
-                        <option value="hot">🔥 Sıcak (Hot)</option>
-                        <option value="warm">⚡ Potansiyel (Warm)</option>
-                        <option value="cold">❄️ Bilgi Alındı (Cold)</option>
+                        <option value="">Seçiniz</option>
+                        <option value="hot">🔥 Hot</option>
+                        <option value="warm">⚡ Warm</option>
+                        <option value="cold">❄️ Cold</option>
                       </select>
                     </div>
 
                     <div className="form-group">
                       <label>Bütçe (TL) *</label>
                       <input 
-                        type="number" 
+                        type="text" 
                         required
                         className="form-control" 
                         placeholder="Maksimum Bütçe" 
-                        value={newLead.budget || ''}
-                        onChange={(e) => setNewLead({ ...newLead, budget: Number(e.target.value) })}
+                        value={formatNumberWithDots(newLead.budget)}
+                        onChange={(e) => {
+                          const rawVal = e.target.value.replace(/\D/g, '');
+                          setNewLead({ ...newLead, budget: Number(rawVal) || 0 });
+                        }}
                       />
                     </div>
                   </div>
@@ -1103,31 +1938,120 @@ export default function Home() {
                     </div>
 
                     <div className="form-group">
-                      <label>Oda İhtiyacı</label>
+                      <label style={{ display: 'block', marginBottom: '0.5rem' }}>Oda İhtiyacı</label>
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(3, 1fr)',
+                        gap: '0.75rem',
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--glass-border)',
+                        borderRadius: '10px',
+                        padding: '0.8rem 1rem',
+                        marginTop: '0.25rem'
+                      }}>
+                        {['4+1', '3+1', '2+1', '1+1', 'Villa'].map((room) => {
+                          const selectedRooms = newLead.room_count
+                            ? newLead.room_count.split(',').map(s => s.trim())
+                            : [];
+                          const isChecked = selectedRooms.includes(room);
+                          
+                          return (
+                            <label
+                              key={room}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                cursor: 'pointer',
+                                fontSize: '0.9rem',
+                                color: isChecked ? 'var(--text-primary)' : 'var(--text-secondary)',
+                                fontWeight: isChecked ? 600 : 400,
+                                userSelect: 'none'
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                value={room}
+                                checked={isChecked}
+                                style={{
+                                  width: '16px',
+                                  height: '16px',
+                                  cursor: 'pointer',
+                                  accentColor: 'var(--color-primary)'
+                                }}
+                                onChange={(e) => {
+                                  let newRooms = [...selectedRooms];
+                                  if (e.target.checked) {
+                                    if (!newRooms.includes(room)) {
+                                      newRooms.push(room);
+                                    }
+                                  } else {
+                                    newRooms = newRooms.filter(r => r !== room);
+                                  }
+                                  const orderedRooms = ['4+1', '3+1', '2+1', '1+1', 'Villa'].filter(r => newRooms.includes(r));
+                                  setNewLead({
+                                    ...newLead,
+                                    room_count: orderedRooms.join(', ')
+                                  });
+                                }}
+                              />
+                              {room}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="form-group">
+                      <label>Müşteriden Gelen Sorular</label>
                       <select 
                         className="form-control"
-                        value={newLead.room_count}
-                        onChange={(e) => setNewLead({ ...newLead, room_count: e.target.value })}
+                        value={newLead.customer_question || ''}
+                        onChange={(e) => setNewLead({ ...newLead, customer_question: e.target.value })}
                       >
-                        <option value="1+1">1+1</option>
-                        <option value="2+1">2+1</option>
-                        <option value="3+1">3+1</option>
-                        <option value="4+1">4+1</option>
-                        <option value="4+2">4+2</option>
-                        <option value="Villa/Arsa">Villa/Arsa Tipi (Oda Yok)</option>
+                        <option value="">Seçiniz</option>
+                        <option value="Fiyat Bilgisi">Fiyat Bilgisi</option>
+                        <option value="Konum">Konum</option>
+                        <option value="Takas İmkanı">Takas İmkanı</option>
+                        <option value="Deniz mesafesi">Deniz mesafesi</option>
+                        <option value="Ebeveyn Banyosu">Ebeveyn Banyosu</option>
+                        <option value="Ödeme Seçenekleri">Ödeme Seçenekleri</option>
+                        <option value="Finansman Şirketine Uygunluk">Finansman Şirketine Uygunluk</option>
+                        <option value="Çatı Dubleksi">Çatı Dubleksi</option>
+                        <option value="Pazarlık Payı">Pazarlık Payı</option>
+                        <option value="Teslim Tarihi">Teslim Tarihi</option>
+                        <option value="Takas Teklifi-Konum">Takas Teklifi-Konum</option>
+                        <option value="Taksit İmkanı">Taksit İmkanı</option>
+                        <option value="Mesafe Sorgusu">Mesafe Sorgusu</option>
+                        <option value="Ara Kat Bilgisi">Ara Kat Bilgisi</option>
+                        <option value="M2 Bilgisi">M2 Bilgisi</option>
                       </select>
                     </div>
 
                     <div className="form-group">
-                      <label>Alım Amacı</label>
+                      <label>Lead Mevcut Durum *</label>
                       <select 
+                        required
                         className="form-control"
-                        value={newLead.purpose}
-                        onChange={(e) => setNewLead({ ...newLead, purpose: e.target.value })}
+                        value={newLead.lead_status || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const updates: Partial<Lead> = { lead_status: val };
+                          if (val === 'Beklemede') {
+                            updates.warmth = 'hot';
+                          }
+                          setNewLead({ ...newLead, ...updates });
+                        }}
                       >
-                        <option value="Oturumluk">Kendi Oturacak (Oturumluk)</option>
-                        <option value="Yatırımlık">Yatırım Amaçlı (Yatırımlık)</option>
-                        <option value="Yazlık">Yaz Dönemi İçin (Yazlık)</option>
+                        <option value="">Seçiniz</option>
+                        <option value="Beklemede">Beklemede</option>
+                        <option value="Güncel Katalog Gönderildi,Davet Yapıldı">Güncel Katalog Gönderildi,Davet Yapıldı</option>
+                        <option value="Katalog Gönderimi Sonrası İletişim Devam">Katalog Gönderimi Sonrası İletişim Devam</option>
+                        <option value="Randevu Alındı">Randevu Alındı</option>
+                        <option value="Red">Red</option>
+                        <option value="Red/Fikri değişebilir">Red/Fikri değişebilir</option>
+                        <option value="İlk temas">İlk temas</option>
+                        <option value="Ulaşılamadı">Ulaşılamadı</option>
                       </select>
                     </div>
 
@@ -1154,24 +2078,30 @@ export default function Home() {
                     </div>
 
                     <div className="form-group">
-                      <label>Medeni Hali & Aile Yapısı</label>
-                      <input 
-                        type="text" 
-                        className="form-control" 
-                        placeholder="Örn: Evli - 2 Çocuklu" 
-                        value={newLead.marital_status}
-                        onChange={(e) => setNewLead({ ...newLead, marital_status: e.target.value })}
-                      />
+                      <label>Red Nedeni</label>
+                      <select 
+                        className="form-control"
+                        value={newLead.rejection_reason || ''}
+                        onChange={(e) => setNewLead({ ...newLead, rejection_reason: e.target.value })}
+                      >
+                        <option value="">Seçiniz</option>
+                        <option value="Mimariyi Beğenmediğinden">Mimariyi Beğenmediğinden</option>
+                        <option value="Farklı Proje Nedeniyle Red">Farklı Proje Nedeniyle Red</option>
+                        <option value="Bütçe Aşımı Nedeniyle Red">Bütçe Aşımı Nedeniyle Red</option>
+                        <option value="Denize Uzaklık Nedeniyle Red">Denize Uzaklık Nedeniyle Red</option>
+                        <option value="Yatırımdan Vazgeçti">Yatırımdan Vazgeçti</option>
+                        <option value="Ebeveyn Banyosu Olmaması">Ebeveyn Banyosu Olmaması</option>
+                        <option value="Sebep belirtmedi">Sebep belirtmedi</option>
+                      </select>
                     </div>
 
                     <div className="form-group">
-                      <label>Mesleği</label>
+                      <label>Lead Geliş Tarihi</label>
                       <input 
-                        type="text" 
+                        type="date" 
                         className="form-control" 
-                        placeholder="Örn: Emekli Mühendis, Esnaf" 
-                        value={newLead.occupation}
-                        onChange={(e) => setNewLead({ ...newLead, occupation: e.target.value })}
+                        value={newLead.created_at || ''}
+                        onChange={(e) => setNewLead({ ...newLead, created_at: e.target.value })}
                       />
                     </div>
                   </div>
@@ -1209,266 +2139,825 @@ export default function Home() {
 
           {/* TAB CONTENT: APPOINTMENTS */}
           {activeTab === 'appointments' && (
-            <div className="appointments-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
-              {/* Form Side */}
-              <div className="glass-panel" style={{ height: 'fit-content' }}>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '1.25rem' }}>Yeni Randevu Planla</h3>
-                <form onSubmit={handleSaveApp}>
-                  <div className="form-group">
-                    <label>Müşteri Seçin *</label>
-                    <select 
-                      className="form-control"
-                      required
-                      value={newApp.lead_id}
-                      onChange={(e) => setNewApp({ ...newApp, lead_id: e.target.value })}
-                    >
-                      <option value="">-- Müşteri Seçin --</option>
-                      {leads.map(l => (
-                        <option key={l.id} value={l.id}>{l.name} ({l.phone})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label>Randevu Tarih ve Saati *</label>
-                    <input 
-                      type="datetime-local" 
-                      required
-                      className="form-control"
-                      value={newApp.date_time}
-                      onChange={(e) => setNewApp({ ...newApp, date_time: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Randevu Yeri / Mülk Adresi</label>
-                    <input 
-                      type="text" 
-                      className="form-control"
-                      placeholder="Örn: Altınoluk 3+1 Daire Yerinde Gösterim"
-                      value={newApp.location}
-                      onChange={(e) => setNewApp({ ...newApp, location: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Açıklama / Özel Notlar</label>
-                    <textarea 
-                      className="form-control"
-                      placeholder="Müşterinin özel beklentileri veya yanındaki ek döküman notları..."
-                      value={newApp.notes}
-                      onChange={(e) => setNewApp({ ...newApp, notes: e.target.value })}
-                    />
-                  </div>
-
-                  <button type="submit" className="glow-btn" style={{ width: '100%', justifyContent: 'center' }}>
-                    <Plus size={18} /> Randevu Ekle
+            <div className="glass-panel animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%' }}>
+              {/* Header Navigation controls */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                {/* Left: View buttons */}
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button 
+                    type="button"
+                    onClick={() => setCalendarView('month')}
+                    className="glow-btn"
+                    style={{
+                      background: calendarView === 'month' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
+                      border: '1px solid var(--glass-border)',
+                      boxShadow: calendarView === 'month' ? 'var(--shadow-glow)' : 'none',
+                      padding: '0.45rem 1.15rem',
+                      borderRadius: '8px',
+                      fontWeight: 600,
+                      color: calendarView === 'month' ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    Ay Görünümü
                   </button>
-                </form>
+                  <button 
+                    type="button"
+                    onClick={() => setCalendarView('week')}
+                    className="glow-btn"
+                    style={{
+                      background: calendarView === 'week' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
+                      border: '1px solid var(--glass-border)',
+                      boxShadow: calendarView === 'week' ? 'var(--shadow-glow)' : 'none',
+                      padding: '0.45rem 1.15rem',
+                      borderRadius: '8px',
+                      fontWeight: 600,
+                      color: calendarView === 'week' ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    Hafta Görünümü
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setCalendarView('day')}
+                    className="glow-btn"
+                    style={{
+                      background: calendarView === 'day' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
+                      border: '1px solid var(--glass-border)',
+                      boxShadow: calendarView === 'day' ? 'var(--shadow-glow)' : 'none',
+                      padding: '0.45rem 1.15rem',
+                      borderRadius: '8px',
+                      fontWeight: 600,
+                      color: calendarView === 'day' ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    Gün Görünümü
+                  </button>
+                </div>
+
+                {/* Middle: Date title & navigation */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <button 
+                    type="button"
+                    onClick={() => navigateCalendar(-1)}
+                    className="glow-btn"
+                    style={{ padding: '0.4rem 0.85rem', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--glass-border)', color: 'var(--text-secondary)', fontSize: '0.85rem' }}
+                  >
+                    Geri
+                  </button>
+                  <span style={{ fontSize: '1.2rem', fontWeight: 800, minWidth: '160px', textAlign: 'center' }}>
+                    {getCalendarTitle()}
+                  </span>
+                  <button 
+                    type="button"
+                    onClick={() => navigateCalendar(1)}
+                    className="glow-btn"
+                    style={{ padding: '0.4rem 0.85rem', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--glass-border)', color: 'var(--text-secondary)', fontSize: '0.85rem' }}
+                  >
+                    İleri
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setCalendarDate(new Date())}
+                    className="glow-btn"
+                    style={{ padding: '0.4rem 0.85rem', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--glass-border)', color: 'var(--text-secondary)', fontSize: '0.85rem', marginLeft: '0.5rem' }}
+                  >
+                    Bugün
+                  </button>
+                </div>
+
+                {/* Right: Add App Button */}
+                <button 
+                  type="button"
+                  onClick={() => openAddAppModal()}
+                  className="glow-btn"
+                  style={{ background: 'var(--success-gradient)', padding: '0.45rem 1.15rem', borderRadius: '8px', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                >
+                  <Plus size={16} /> Randevu Planla
+                </button>
               </div>
 
-              {/* List Side */}
-              <div className="glass-panel" style={{ flexGrow: 1 }}>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '1.25rem' }}>Planlanmış Randevular</h3>
-                {appointments.length === 0 ? (
-                  <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '4rem 0' }}>Planlanmış randevu bulunmuyor.</p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    {appointments.map(a => (
-                      <div key={a.id} className="glass-panel" style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
-                          <div>
-                            <h4 style={{ fontWeight: 700, fontSize: '1.05rem' }}>{a.lead_name}</h4>
-                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.2rem' }}>
-                              <Calendar size={12} /> {new Date(a.date_time).toLocaleString('tr-TR')}
-                            </p>
-                            {a.location && (
-                              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.3rem', marginTop: '0.2rem' }}>
-                                <MapPin size={12} /> {a.location}
-                              </p>
-                            )}
-                          </div>
-                          <span className={`badge ${
-                            a.status === 'completed' ? 'badge-hot' : a.status === 'cancelled' ? 'badge-cold' : 'badge-warm'
-                          }`} style={{ background: a.status === 'completed' ? 'rgba(52, 211, 153, 0.1)' : undefined, color: a.status === 'completed' ? 'var(--color-success)' : undefined }}>
-                            {a.status === 'completed' ? 'Tamamlandı' : a.status === 'cancelled' ? 'İptal Edildi' : 'Bekliyor'}
-                          </span>
-                        </div>
-                        {a.notes && (
-                          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.75rem', background: 'rgba(0,0,0,0.1)', padding: '0.5rem', borderRadius: '6px' }}>
-                            {a.notes}
-                          </p>
-                        )}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1rem', borderTop: '1px solid var(--glass-border)', paddingTop: '0.75rem' }}>
-                          {a.status === 'pending' && (
-                            <>
-                              <button 
-                                onClick={() => handleAppStatus(a, 'completed')}
-                                className="glow-btn" 
-                                style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', background: 'var(--success-gradient)', boxShadow: 'none' }}
-                              >
-                                Tamamla
-                              </button>
-                              <button 
-                                onClick={() => handleAppStatus(a, 'cancelled')}
-                                className="glow-btn" 
-                                style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', border: '1px solid var(--glass-border)', boxShadow: 'none' }}
-                              >
-                                İptal Et
-                              </button>
-                            </>
-                          )}
-                          <button 
-                            onClick={() => handleDeleteApp(a.id)}
-                            style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '0.25rem' }}
-                            title="Randevuyu Sil"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* Render Selected View */}
+              {calendarView === 'month' && renderMonthView()}
+              {calendarView === 'week' && renderWeekView()}
+              {calendarView === 'day' && renderDayView()}
             </div>
           )}
 
           {/* TAB CONTENT: MATCHMAKER (SMART MATCHING) */}
           {activeTab === 'matchmaker' && (
-            <div className="matchmaker-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
-              {/* Add Property Form */}
-              <div className="glass-panel" style={{ height: 'fit-content' }}>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '1.25rem' }}>Satışa Çıkan Gayrimenkul Girişi</h3>
-                <form onSubmit={handleSaveProperty}>
-                  <div className="form-group">
-                    <label>Mülk Başlığı / Portföy İsmi *</label>
-                    <input 
-                      type="text" 
-                      required
-                      className="form-control"
-                      placeholder="Örn: Altınoluk Sahilinde Dubleks"
-                      value={newProperty.title}
-                      onChange={(e) => setNewProperty({ ...newProperty, title: e.target.value })}
-                    />
-                  </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%' }}>
+              {/* Matchmaker Sub-Navigation */}
+              <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.75rem' }}>
+                <button
+                  onClick={() => setMatchmakerSubTab('matching')}
+                  className="glow-btn animate-fade-in"
+                  style={{
+                    background: matchmakerSubTab === 'matching' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid var(--glass-border)',
+                    boxShadow: matchmakerSubTab === 'matching' ? 'var(--shadow-glow)' : 'none',
+                    padding: '0.5rem 1.25rem',
+                    borderRadius: '8px',
+                    fontWeight: 600,
+                    color: matchmakerSubTab === 'matching' ? '#fff' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
+                  }}
+                >
+                  <Sparkles size={16} /> Müşteri Eşleştirici
+                </button>
+                <button
+                  onClick={() => setMatchmakerSubTab('portfolio')}
+                  className="glow-btn animate-fade-in"
+                  style={{
+                    background: matchmakerSubTab === 'portfolio' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid var(--glass-border)',
+                    boxShadow: matchmakerSubTab === 'portfolio' ? 'var(--shadow-glow)' : 'none',
+                    padding: '0.5rem 1.25rem',
+                    borderRadius: '8px',
+                    fontWeight: 600,
+                    color: matchmakerSubTab === 'portfolio' ? '#fff' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
+                  }}
+                >
+                  <Briefcase size={16} /> Portföy & Daire Yönetimi
+                </button>
+              </div>
 
-                  <div className="form-group">
-                    <label>Satış Fiyatı (TL) *</label>
-                    <input 
-                      type="number" 
-                      required
+              {/* Sub-tab 1: Müşteri Eşleştirici */}
+              {matchmakerSubTab === 'matching' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  <div className="glass-panel animate-fade-in" style={{ padding: '1.5rem' }}>
+                    <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '1rem', color: 'var(--color-primary)' }}>Eşleştirilecek Müşteriyi Seçin</h3>
+                    <select
                       className="form-control"
-                      placeholder="Gayrimenkul Fiyatı"
-                      value={newProperty.price || ''}
-                      onChange={(e) => setNewProperty({ ...newProperty, price: Number(e.target.value) })}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Bölge *</label>
-                    <input 
-                      type="text" 
-                      required
-                      className="form-control"
-                      placeholder="Örn: Altınoluk"
-                      value={newProperty.region}
-                      onChange={(e) => setNewProperty({ ...newProperty, region: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label>Oda Sayısı</label>
-                    <select 
-                      className="form-control"
-                      value={newProperty.room_count}
-                      onChange={(e) => setNewProperty({ ...newProperty, room_count: e.target.value })}
+                      style={{ maxWidth: '450px' }}
+                      value={selectedLeadId}
+                      onChange={(e) => setSelectedLeadId(e.target.value)}
                     >
-                      <option value="1+1">1+1</option>
-                      <option value="2+1">2+1</option>
-                      <option value="3+1">3+1</option>
-                      <option value="4+1">4+1</option>
-                      <option value="4+2">4+2</option>
+                      <option value="">-- Müşteri Seçin --</option>
+                      {(leads || []).filter(Boolean).map(l => (
+                        <option key={l.id} value={l.id}>
+                          {l.name} ({l.room_count || 'Belirsiz'} Oda - Bütçe: {formatCurrency(l.budget)}) - {l.warmth === 'hot' ? '🔥 Hot' : l.warmth === 'warm' ? '⚡ Warm' : '❄️ Cold'}
+                        </option>
+                      ))}
                     </select>
                   </div>
 
-                  <button type="submit" className="glow-btn" style={{ width: '100%', justifyContent: 'center' }}>
-                    <Plus size={18} /> Gayrimenkul Kaydet
-                  </button>
-                </form>
-              </div>
+                  {(() => {
+                    const selectedLead = leads.find(l => l.id === selectedLeadId);
+                    if (!selectedLead) {
+                      return (
+                        <div className="glass-panel" style={{ padding: '3rem 2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                          <Users size={36} style={{ marginBottom: '0.75rem', opacity: 0.5, color: 'var(--color-primary)' }} />
+                          <p>Lütfen daire eşleştirmesi yapmak istediğiniz müşteriyi yukarıdan seçin.</p>
+                        </div>
+                      );
+                    }
 
-              {/* Matching Panel */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', flexGrow: 1 }}>
-                <div className="glass-panel">
-                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '1.25rem' }}>Kayıtlı Portföyler & Akıllı Bütçe Eşleşmeleri</h3>
-                  {properties.length === 0 ? (
-                    <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '4rem 0' }}>Kayıtlı portföy bulunmuyor.</p>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                      {properties.map(p => {
-                        // Find matching leads whose budget >= property price and flag is active
-                        const matchedLeads = leads.filter(l => l.budget >= p.price && l.is_alert_active);
+                    const leadRoom = String(selectedLead.room_count || '').trim().toLowerCase();
+                    const budget = Number(selectedLead.budget) || 0;
+                    const maxFlexibleBudget = budget * 1.10; // +10% budget flexibility
 
-                        return (
-                          <div key={p.id} className="glass-panel" style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderLeft: `4px solid ${matchedLeads.length > 0 ? 'var(--color-success)' : 'var(--text-muted)'}` }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                              <div>
-                                <h4 style={{ fontWeight: 800, fontSize: '1.1rem' }}>{p.title}</h4>
-                                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.2rem', flexWrap: 'wrap' }}>
-                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>📍 {p.region}</span>
-                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>🏠 {p.room_count}</span>
-                                </div>
-                                <p style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--color-primary)', marginTop: '0.5rem' }}>
-                                  {formatCurrency(p.price)}
-                                </p>
-                              </div>
-                              <button 
-                                onClick={() => handleDeleteProperty(p.id)}
-                                style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer' }}
-                              >
-                                <Trash2 size={16} />
-                              </button>
+                    // Filter properties that are active, have a valid price, and match notes keywords
+                    const activeProps = (properties || []).filter(p => {
+                      if (!p) return false;
+                      
+                      // 1. Exclude Kapalı properties
+                      const isClosed = String(p.portfoy_kimde || '').trim().toLowerCase() === 'kapalı';
+                      if (isClosed) return false;
+                      
+                      // 2. Safeguard: Price must be greater than 0
+                      const price = Number(p.price) || 0;
+                      if (price <= 0) return false;
+
+                      // 3. Keyword matching between lead notes and property features
+                      const leadNotes = String(selectedLead.notes || '').toLowerCase();
+                      
+                      // Check for "bahçe" or "bahçeli" keyword in lead notes
+                      if (leadNotes.includes('bahçe') || leadNotes.includes('bahceli') || leadNotes.includes('bahçeli')) {
+                        const propExtra = String(p.extra_ozellik || '').toLowerCase();
+                        const propTitle = String(p.title || '').toLowerCase();
+                        const propHasGarden = propExtra.includes('bahçe') || propExtra.includes('bahçeli') || propExtra.includes('bahceli') ||
+                                              propTitle.includes('bahçe') || propTitle.includes('bahçeli') || propTitle.includes('bahceli');
+                        if (!propHasGarden) return false;
+                      }
+
+                      // Check for "dubleks" or "dublex" keyword in lead notes
+                      if (leadNotes.includes('dubleks') || leadNotes.includes('dublex')) {
+                        const propExtra = String(p.extra_ozellik || '').toLowerCase();
+                        const propTitle = String(p.title || '').toLowerCase();
+                        const propType = String(p.type || '').toLowerCase();
+                        const propKullAmaci = String(p.kull_amaci || '').toLowerCase();
+                        const propHasDuplex = propExtra.includes('dubleks') || propExtra.includes('dublex') ||
+                                              propTitle.includes('dubleks') || propTitle.includes('dublex') ||
+                                              propType.includes('dubleks') || propType.includes('dublex') ||
+                                              propKullAmaci.includes('dubleks') || propKullAmaci.includes('dublex');
+                        if (!propHasDuplex) return false;
+                      }
+
+                      return true;
+                    });
+
+                    const leadRooms = leadRoom ? leadRoom.split(',').map(s => s.trim().toLowerCase()) : [];
+
+                    // Split into exact and flexible budget matching
+                    const exactMatches = activeProps.filter(p => {
+                      const propRoom = String(p.room_count || '').trim().toLowerCase();
+                      const price = Number(p.price) || 0;
+                      const isRoomMatch = leadRooms.length === 0 || leadRooms.includes(propRoom);
+                      return isRoomMatch && price <= budget;
+                    });
+
+                    const flexibleMatches = activeProps.filter(p => {
+                      const propRoom = String(p.room_count || '').trim().toLowerCase();
+                      const price = Number(p.price) || 0;
+                      const isRoomMatch = leadRooms.length === 0 || leadRooms.includes(propRoom);
+                      return isRoomMatch && price > budget && price <= maxFlexibleBudget;
+                    });
+
+                    return (
+                      <div className="animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }}>
+                        {/* Lead Details Card */}
+                        <div className="glass-panel" style={{ background: 'var(--bg-tertiary)', borderLeft: '4px solid var(--color-primary)' }}>
+                          <h4 style={{ fontSize: '1.1rem', fontWeight: 800, marginBottom: '0.75rem' }}>Müşteri Talebi ve Kriterleri</h4>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                            <div>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Müşteri Adı:</span>
+                              <p style={{ fontWeight: 700 }}>{selectedLead.name}</p>
                             </div>
-
-                            {/* Match alert section */}
-                            <div style={{ marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--glass-border)' }}>
-                              {matchedLeads.length > 0 ? (
-                                <div>
-                                  <p style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: '0.3rem', marginBottom: '0.5rem' }}>
-                                    <Check size={16} /> Bütçesi Uyan Sıcak Müşteriler ({matchedLeads.length})
-                                  </p>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                    {matchedLeads.map(l => (
-                                      <div key={l.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(52, 211, 153, 0.05)', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1px solid rgba(52, 211, 153, 0.1)' }}>
-                                        <div>
-                                          <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{l.name}</div>
-                                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Maksimum Bütçe: {formatCurrency(l.budget)}</div>
-                                        </div>
-                                        <a 
-                                          href={`https://api.whatsapp.com/send?phone=${l.phone.replace(/\D/g, '')}&text=Merhaba ${l.name}, istediğiniz bütçeye uygun yeni bir portföyümüz geldi: ${p.title}. Detayları görüşmek ister misiniz?`}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="glow-btn"
-                                          style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem', background: 'var(--success-gradient)', boxShadow: 'none' }}
-                                        >
-                                          WhatsApp'tan Ulaş
-                                        </a>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : (
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Bu mülk bütçesine uyan ve fiyat alarmı açık olan bir müşteri henüz bulunmuyor.</p>
-                              )}
+                            <div>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>İstediği Oda Sayısı:</span>
+                              <p style={{ fontWeight: 700, color: 'var(--color-primary)' }}>🏠 {selectedLead.room_count || 'Belirtilmedi'}</p>
+                            </div>
+                            <div>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Maksimum Bütçe:</span>
+                              <p style={{ fontWeight: 700, color: 'var(--color-success)' }}>💰 {formatCurrency(selectedLead.budget)}</p>
+                            </div>
+                            <div>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Esnek Limit (+%10):</span>
+                              <p style={{ fontWeight: 700, color: 'var(--color-warning)' }}>⚡ {formatCurrency(maxFlexibleBudget)}</p>
                             </div>
                           </div>
-                        );
-                      })}
+                        </div>
+
+                        {/* Matching Results Columns */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '1.5rem' }}>
+                          
+                          {/* Col 1: Exact Matches */}
+                          <div className="glass-panel">
+                            <h4 style={{ fontSize: '1.1rem', fontWeight: 800, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-success)' }}>
+                              <CheckCircle2 size={18} /> Tam Uyan Daireler ({exactMatches.length})
+                            </h4>
+
+                            {exactMatches.length === 0 ? (
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontStyle: 'italic', padding: '1rem 0' }}>Bütçe sınırları içinde tam uyan daire bulunamadı.</p>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                {exactMatches.map(p => {
+                                  const shareText = `Merhaba ${selectedLead.name},\n\nAradığınız kriterlere (${selectedLead.room_count}) ve bütçenize tam uygun bir dairemiz mevcuttur:\n🏢 Parsel ${p.parsel || '-'} / Daire No: ${p.bag_bol_no || '-'}\n📐 Net Alan: ${p.net_alan || '-'} m² / Kat: ${p.kat || '-'}\n💰 Fiyat: ${formatCurrency(p.price)}\n${p.extra_ozellik ? `✨ Özellik: ${p.extra_ozellik}\n` : ''}\nDetaylı bilgi ve sunum için görüşebiliriz.`;
+                                  const whatsappUrl = `https://api.whatsapp.com/send?phone=${(selectedLead.phone || '').replace(/\D/g, '')}&text=${encodeURIComponent(shareText)}`;
+
+                                  return (
+                                    <div key={p.id} style={{ background: 'rgba(16, 185, 129, 0.03)', border: '1px solid rgba(16, 185, 129, 0.15)', borderRadius: '8px', padding: '1rem' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                        <div>
+                                          <h5 style={{ fontWeight: 800, fontSize: '1rem' }}>Parsel {p.parsel} - Daire {p.bag_bol_no}</h5>
+                                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Kat: {p.kat || '-'} | Alan: {p.net_alan || '-'}m² Net / {p.brut_alan || '-'}m² Brüt</span>
+                                          {p.extra_ozellik && <p style={{ fontSize: '0.75rem', color: 'var(--color-primary)', marginTop: '0.2rem' }}>✨ {p.extra_ozellik}</p>}
+                                          <p style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--color-success)', marginTop: '0.5rem' }}>{formatCurrency(p.price)}</p>
+                                        </div>
+                                        <a href={whatsappUrl} target="_blank" rel="noreferrer" className="glow-btn" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: 'var(--success-gradient)' }}>
+                                          Teklif Et
+                                        </a>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Col 2: Flexible Matches */}
+                          <div className="glass-panel">
+                            <h4 style={{ fontSize: '1.1rem', fontWeight: 800, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-warning)' }}>
+                              <AlertTriangle size={18} /> Esnek Bütçeli Alternatifler (+%10) ({flexibleMatches.length})
+                            </h4>
+
+                            {flexibleMatches.length === 0 ? (
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', fontStyle: 'italic', padding: '1rem 0' }}>Bütçe esneklik limiti (+%10) dahilinde başka daire bulunamadı.</p>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                {flexibleMatches.map(p => {
+                                  const exceedPercent = Math.round(((Number(p.price) - budget) / budget) * 100);
+                                  const shareText = `Merhaba ${selectedLead.name},\n\nAradığınız kriterlere (${selectedLead.room_count}) uyan, bütçenizi çok az esneterek sahip olabileceğiniz alternatif bir dairemiz mevcuttur:\n🏢 Parsel ${p.parsel || '-'} / Daire No: ${p.bag_bol_no || '-'}\n📐 Net Alan: ${p.net_alan || '-'} m² / Kat: ${p.kat || '-'}\n💰 Fiyat: ${formatCurrency(p.price)}\n${p.extra_ozellik ? `✨ Özellik: ${p.extra_ozellik}\n` : ''}\nDetaylı bilgi ve sunum için görüşebiliriz.`;
+                                  const whatsappUrl = `https://api.whatsapp.com/send?phone=${(selectedLead.phone || '').replace(/\D/g, '')}&text=${encodeURIComponent(shareText)}`;
+
+                                  return (
+                                    <div key={p.id} style={{ background: 'rgba(245, 158, 11, 0.03)', border: '1px solid rgba(245, 158, 11, 0.15)', borderRadius: '8px', padding: '1rem' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                        <div>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <h5 style={{ fontWeight: 800, fontSize: '1rem' }}>Parsel {p.parsel} - Daire {p.bag_bol_no}</h5>
+                                            <span style={{ fontSize: '0.65rem', background: 'rgba(245, 158, 11, 0.15)', color: 'var(--color-warning)', padding: '0.1rem 0.4rem', borderRadius: '4px', fontWeight: 600 }}>Bütçeyi %{exceedPercent} Aşıyor</span>
+                                          </div>
+                                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Kat: {p.kat || '-'} | Alan: {p.net_alan || '-'}m² Net / {p.brut_alan || '-'}m² Brüt</span>
+                                          {p.extra_ozellik && <p style={{ fontSize: '0.75rem', color: 'var(--color-primary)', marginTop: '0.2rem' }}>✨ {p.extra_ozellik}</p>}
+                                          <p style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--color-warning)', marginTop: '0.5rem' }}>{formatCurrency(p.price)}</p>
+                                        </div>
+                                        <a href={whatsappUrl} target="_blank" rel="noreferrer" className="glow-btn" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', background: 'var(--success-gradient)' }}>
+                                          Teklif Et
+                                        </a>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Sub-tab 2: Portföy & Daire Yönetimi */}
+              {matchmakerSubTab === 'portfolio' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%' }}>
+                  
+                  {/* Search and Action Bar */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexGrow: 1, maxWidth: '400px', position: 'relative' }}>
+                      <input
+                        type="text"
+                        placeholder="Parsel, Daire No, Oda Tipi veya Özellik Ara..."
+                        className="form-control"
+                        style={{ paddingLeft: '2.5rem' }}
+                        value={propertySearchQuery}
+                        onChange={(e) => setPropertySearchQuery(e.target.value)}
+                      />
+                      <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flexWrap: 'wrap' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', color: 'var(--text-primary)', userSelect: 'none' }}>
+                        <input
+                          type="checkbox"
+                          checked={showAllColumns}
+                          onChange={(e) => setShowAllColumns(e.target.checked)}
+                          style={{ width: '16px', height: '16px', accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+                        />
+                        <span>Detaylı Görünüm (17 Kolon)</span>
+                      </label>
+
+                      <button
+                        onClick={async () => {
+                          if (confirm('Tüm portföy envanterini silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.')) {
+                            await StorageManager.clearProperties();
+                            await loadAllData();
+                            alert('Tüm portföy başarıyla silindi.');
+                          }
+                        }}
+                        className="glow-btn"
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.15)',
+                          border: '1px solid rgba(239, 68, 68, 0.3)',
+                          color: '#f87171',
+                          boxShadow: 'none'
+                        }}
+                      >
+                        <Trash2 size={18} /> Tüm Portföyü Temizle
+                      </button>
+
+                      <button
+                        onClick={() => setShowAddPropForm(!showAddPropForm)}
+                        className="glow-btn"
+                      >
+                        {showAddPropForm ? <X size={18} /> : <Plus size={18} />} {showAddPropForm ? 'Formu Kapat' : 'Yeni Daire Ekle (Satır Insert)'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Add Property Form */}
+                  {showAddPropForm && (
+                    <div className="glass-panel animate-fade-in" style={{ background: 'var(--bg-tertiary)' }}>
+                      <h3 style={{ fontSize: '1.2rem', fontWeight: 800, marginBottom: '1.25rem', color: 'var(--color-primary)' }}>Yeni Daire Bilgileri</h3>
+                      <form onSubmit={handleSaveProperty}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.25rem', marginBottom: '1.5rem' }}>
+                          <div className="form-group">
+                            <label>Parsel No *</label>
+                            <input
+                              type="text"
+                              required
+                              className="form-control"
+                              placeholder="Örn: 24"
+                              value={newProperty.parsel || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, parsel: e.target.value })}
+                            />
+                          </div>
+                          
+                          <div className="form-group">
+                            <label>Bağımsız Bölüm No (Daire No) *</label>
+                            <input
+                              type="text"
+                              required
+                              className="form-control"
+                              placeholder="Örn: 4"
+                              value={newProperty.bag_bol_no || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, bag_bol_no: e.target.value })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Daire Tipi (Oda Sayısı) *</label>
+                            <select
+                              className="form-control"
+                              value={newProperty.room_count}
+                              onChange={(e) => setNewProperty({ ...newProperty, room_count: e.target.value })}
+                            >
+                              <option value="1+1">1+1</option>
+                              <option value="2+1">2+1</option>
+                              <option value="3+1">3+1</option>
+                              <option value="4+1">4+1</option>
+                              <option value="4+2">4+2</option>
+                            </select>
+                          </div>
+
+                          <div className="form-group">
+                            <label>Bulunduğu Kat</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              placeholder="Örn: ZEMİN KAT"
+                              value={newProperty.kat || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, kat: e.target.value })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Kullanım Amacı</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              placeholder="Örn: DUBLEKS MESKEN"
+                              value={newProperty.kull_amaci || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, kull_amaci: e.target.value })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Net Alan (m²)</label>
+                            <input
+                              type="number"
+                              className="form-control"
+                              placeholder="Örn: 85"
+                              value={newProperty.net_alan || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, net_alan: Number(e.target.value) || 0 })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Brüt Alan (m²)</label>
+                            <input
+                              type="number"
+                              className="form-control"
+                              placeholder="Örn: 120"
+                              value={newProperty.brut_alan || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, brut_alan: Number(e.target.value) || 0 })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Fiyat (TL) *</label>
+                            <input
+                              type="text"
+                              required
+                              className="form-control"
+                              placeholder="Satış Fiyatı"
+                              value={formatNumberWithDots(newProperty.price)}
+                              onChange={(e) => {
+                                const rawVal = e.target.value.replace(/\D/g, '');
+                                setNewProperty({ ...newProperty, price: Number(rawVal) || 0 });
+                              }}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Statü / Portföy Kimde *</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              placeholder="Açık, Kapalı, NOVA, İsim"
+                              value={newProperty.portfoy_kimde || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, portfoy_kimde: e.target.value })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Ekstra Özellik</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              placeholder="Örn: BAHÇELİ, ŞÖMİNELİ"
+                              value={newProperty.extra_ozellik || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, extra_ozellik: e.target.value })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Merdiven Alanı (m²)</label>
+                            <input
+                              type="number"
+                              className="form-control"
+                              placeholder="Örn: 3.75"
+                              value={newProperty.merdiven_alan || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, merdiven_alan: Number(e.target.value) || 0 })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Ortak Alan Payı (m²)</label>
+                            <input
+                              type="number"
+                              className="form-control"
+                              placeholder="Örn: 18.65"
+                              value={newProperty.ortak_alan || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, ortak_alan: Number(e.target.value) || 0 })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Kapalı+Açık Alan (m²)</label>
+                            <input
+                              type="number"
+                              className="form-control"
+                              placeholder="Örn: 97.5"
+                              value={newProperty.kapali_acik_alan || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, kapali_acik_alan: Number(e.target.value) || 0 })}
+                            />
+                          </div>
+
+                          <div className="form-group">
+                            <label>Daire Sahibi (İsim Soyisim)</label>
+                            <input
+                              type="text"
+                              className="form-control"
+                              placeholder="Mülk Sahibi İsim Soyisim"
+                              value={newProperty.daire_sahibi || ''}
+                              onChange={(e) => setNewProperty({ ...newProperty, daire_sahibi: e.target.value })}
+                            />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddPropForm(false)}
+                            className="glow-btn"
+                            style={{ background: 'var(--bg-hover)', color: 'var(--text-secondary)', border: '1px solid var(--glass-border)', boxShadow: 'none' }}
+                          >
+                            Vazgeç
+                          </button>
+                          <button
+                            type="submit"
+                            className="glow-btn"
+                          >
+                            Kaydet ve Ekle
+                          </button>
+                        </div>
+                      </form>
                     </div>
                   )}
+
+                  {/* Properties Table List */}
+                  <div className="glass-panel animate-fade-in" style={{ overflowX: 'auto', padding: '1rem' }}>
+                    {(() => {
+                      const filteredProps = (properties || []).filter(p => {
+                        if (!p) return false;
+                        const parsel = String(p.parsel || '').toLowerCase();
+                        const bag = String(p.bag_bol_no || '').toLowerCase();
+                        const room = String(p.room_count || '').toLowerCase();
+                        const extra = String(p.extra_ozellik || '').toLowerCase();
+                        const kimde = String(p.portfoy_kimde || '').toLowerCase();
+                        const query = propertySearchQuery.toLowerCase();
+                        return parsel.includes(query) || bag.includes(query) || room.includes(query) || extra.includes(query) || kimde.includes(query);
+                      });
+
+                      if (filteredProps.length === 0) {
+                        return (
+                          <div style={{ textAlign: 'center', padding: '3rem 0', color: 'var(--text-secondary)' }}>
+                            Kayıtlı ve kriterlerinize uyan daire bulunamadı.
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div style={{ overflowX: 'auto', width: '100%' }}>
+                          <table style={{ width: '100%', minWidth: showAllColumns ? '1800px' : '100%', borderCollapse: 'collapse', fontSize: '0.85rem', textAlign: 'left' }}>
+                            <thead>
+                              <tr style={{ borderBottom: '2px solid var(--glass-border)', color: 'var(--color-primary)' }}>
+                                {!showAllColumns && <th style={{ padding: '0.75rem 0.5rem', width: '40px' }}></th>}
+                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Parsel</th>
+                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Daire No</th>
+                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kat</th>
+                                {showAllColumns && <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kull. Amacı</th>}
+                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Daire Tipi</th>
+                                {showAllColumns && (
+                                  <>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kapalı Alan</th>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Açık Alan</th>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Merdiven Alan</th>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ortak Alan Payı</th>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Net Alan</th>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kapalı+Açık Alan</th>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Daire Sahibi</th>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Brüt Alan</th>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Portföy Adı</th>
+                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ekstra Özellik</th>
+                                  </>
+                                )}
+                                {!showAllColumns && <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Alan (Net / Brüt)</th>}
+                                {!showAllColumns && <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ekstra Özellik</th>}
+                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700, width: '130px' }}>Fiyat</th>
+                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700, width: '120px' }}>Durum</th>
+                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700, textAlign: 'center' }}>İşlem</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredProps.map((p, idx) => {
+                                const isExpanded = !!expandedPropRows[p.id];
+                                return (
+                                  <React.Fragment key={p.id}>
+                                    <tr
+                                      style={{
+                                        borderBottom: isExpanded ? 'none' : '1px solid var(--glass-border)',
+                                        background: idx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.01)',
+                                        transition: 'background 0.2s'
+                                      }}
+                                    >
+                                      {!showAllColumns && (
+                                        <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
+                                          <button
+                                            type="button"
+                                            onClick={() => setExpandedPropRows({
+                                              ...expandedPropRows,
+                                              [p.id]: !isExpanded
+                                            })}
+                                            style={{
+                                              background: 'none',
+                                              border: 'none',
+                                              color: 'var(--color-primary)',
+                                              cursor: 'pointer',
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              padding: '0.2rem',
+                                              transition: 'transform 0.2s'
+                                            }}
+                                          >
+                                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                          </button>
+                                        </td>
+                                      )}
+                                      <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>{p.parsel}</td>
+                                      <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>{p.bag_bol_no}</td>
+                                      <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kat || '-'}</td>
+                                      {showAllColumns && <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kull_amaci || '-'}</td>}
+                                      <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontWeight: 500 }}>{p.room_count}</td>
+                                      {showAllColumns && (
+                                        <>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kapali_alan ? `${p.kapali_alan} m²` : '-'}</td>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.acik_alan ? `${p.acik_alan} m²` : '-'}</td>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.merdiven_alan ? `${p.merdiven_alan} m²` : '-'}</td>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.ortak_alan ? `${p.ortak_alan} m²` : '-'}</td>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.net_alan ? `${p.net_alan} m²` : '-'}</td>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kapali_acik_alan ? `${p.kapali_acik_alan} m²` : '-'}</td>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontWeight: 500 }}>{p.daire_sahibi || '-'}</td>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.brut_alan ? `${p.brut_alan} m²` : '-'}</td>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.portfoy_adi || '-'}</td>
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.extra_ozellik || '-'}</td>
+                                        </>
+                                      )}
+                                      {!showAllColumns && (
+                                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>
+                                          {p.net_alan ? `${p.net_alan}m²` : '-'} / {p.brut_alan ? `${p.brut_alan}m²` : '-'}
+                                        </td>
+                                      )}
+                                      {!showAllColumns && (
+                                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--color-primary)', fontSize: '0.75rem', fontWeight: 600 }}>
+                                          {p.extra_ozellik || '-'}
+                                        </td>
+                                      )}
+                                      <td style={{ padding: '0.5rem 0.5rem' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                          <input
+                                            key={p.id + '-' + p.price}
+                                            type="text"
+                                            defaultValue={formatNumberWithDots(p.price)}
+                                            onChange={(e) => {
+                                              e.target.value = formatNumberWithDots(e.target.value);
+                                            }}
+                                            onBlur={async (e) => {
+                                              const newVal = Number(e.target.value.replace(/\D/g, '')) || 0;
+                                              if (newVal !== p.price) {
+                                                await handleInlinePropertyUpdate(p, 'price', newVal);
+                                              }
+                                            }}
+                                            onKeyDown={async (e) => {
+                                              if (e.key === 'Enter') {
+                                                const input = e.target as HTMLInputElement;
+                                                const newVal = Number(input.value.replace(/\D/g, '')) || 0;
+                                                if (newVal !== p.price) {
+                                                  await handleInlinePropertyUpdate(p, 'price', newVal);
+                                                  input.blur();
+                                                }
+                                              }
+                                            }}
+                                            className="form-control"
+                                            style={{ padding: '0.25rem 0.5rem', height: '28px', fontSize: '0.85rem', width: '100px' }}
+                                          />
+                                        </div>
+                                      </td>
+                                      <td style={{ padding: '0.5rem 0.5rem' }}>
+                                        <input
+                                          type="text"
+                                          defaultValue={p.portfoy_kimde || ''}
+                                          placeholder="Açık/Kapalı/NOVA"
+                                          onBlur={async (e) => {
+                                            const newVal = e.target.value.trim();
+                                            if (newVal !== (p.portfoy_kimde || '')) {
+                                              await handleInlinePropertyUpdate(p, 'portfoy_kimde', newVal);
+                                            }
+                                          }}
+                                          onKeyDown={async (e) => {
+                                            if (e.key === 'Enter') {
+                                              const input = e.target as HTMLInputElement;
+                                              const newVal = input.value.trim();
+                                              if (newVal !== (p.portfoy_kimde || '')) {
+                                                await handleInlinePropertyUpdate(p, 'portfoy_kimde', newVal);
+                                                input.blur();
+                                              }
+                                            }
+                                          }}
+                                          className="form-control"
+                                          style={{
+                                            padding: '0.25rem 0.5rem',
+                                            height: '28px',
+                                            fontSize: '0.85rem',
+                                            width: '100px',
+                                            color: String(p.portfoy_kimde).toLowerCase() === 'kapalı' ? 'var(--color-danger)' : 
+                                                   String(p.portfoy_kimde).toLowerCase() === 'nova' ? 'var(--color-warning)' : 'var(--color-success)'
+                                          }}
+                                        />
+                                      </td>
+                                      <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
+                                        <button
+                                          onClick={() => handleDeleteProperty(p.id)}
+                                          style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '0.2rem' }}
+                                          title="Daireyi Sil"
+                                        >
+                                          <Trash2 size={15} />
+                                        </button>
+                                      </td>
+                                    </tr>
+                                    {isExpanded && !showAllColumns && (
+                                      <tr style={{ background: 'rgba(255, 255, 255, 0.015)' }}>
+                                        <td colSpan={10} style={{ padding: '1.25rem', borderBottom: '1px solid var(--glass-border)' }}>
+                                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', color: 'var(--text-secondary)' }}>
+                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Kullanım Amacı:</span> {p.kull_amaci || '-'}</div>
+                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Kapalı Alan:</span> {p.kapali_alan ? `${p.kapali_alan} m²` : '-'}</div>
+                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Açık Alan:</span> {p.acik_alan ? `${p.acik_alan} m²` : '-'}</div>
+                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Merdiven Alanı:</span> {p.merdiven_alan ? `${p.merdiven_alan} m²` : '-'}</div>
+                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Ortak Alan Payı:</span> {p.ortak_alan ? `${p.ortak_alan} m²` : '-'}</div>
+                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Net Alan:</span> {p.net_alan ? `${p.net_alan} m²` : '-'}</div>
+                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Kapalı+Açık Alan:</span> {p.kapali_acik_alan ? `${p.kapali_acik_alan} m²` : '-'}</div>
+                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Daire Sahibi:</span> {p.daire_sahibi || '-'}</div>
+                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Portföy Adı:</span> {p.portfoy_adi || '-'}</div>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </div>
-              </div>
+              )}
+
             </div>
           )}
 
@@ -1550,8 +3039,99 @@ export default function Home() {
             <div className="glass-panel" style={{ maxWidth: '850px', margin: '0 auto' }}>
               <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '0.5rem' }}>Excel / CSV Dosyasından Veri Yükle</h2>
               <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                Eski müşteri verilerinizi sisteme toplu olarak aktarın. Kolonları eşleştirerek Excel dosyanızın biçimini bozmadan doğrudan yükleme yapabilirsiniz.
+                Verilerinizi sisteme toplu olarak aktarın. Kolonları eşleştirerek veya otomatik şablonlarla Excel dosyanızın biçimini bozmadan doğrudan yükleme yapabilirsiniz.
               </p>
+
+              {/* Seeding Section */}
+              <div style={{
+                background: 'rgba(255, 106, 0, 0.05)',
+                border: '1px solid rgba(255, 106, 0, 0.15)',
+                borderRadius: '12px',
+                padding: '1.25rem',
+                marginBottom: '1.5rem',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '1rem'
+              }}>
+                <div style={{ flex: '1', minWidth: '280px' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <RefreshCw size={16} /> Mevcut Dataları Sıfırla & Excel'den Tohumla
+                  </h3>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
+                    Sistemdeki tüm mevcut müşteri ve randevu kayıtlarını kalıcı olarak siler ve sunucudaki `NarlıVadiEvleri_Lead Dashboard.xlsx` dosyasındaki güncel müşteri verilerini aktarır.
+                  </p>
+                </div>
+                <button
+                  onClick={async () => {
+                    if (confirm('Tüm mevcut müşteri ve randevu verileriniz KALICI OLARAK SİLİNECEKTİR. Emin misiniz?')) {
+                      if (confirm('Lütfen bu işlemin geri alınamayacağını unutmayın. Devam etmek istiyor musunuz?')) {
+                        try {
+                          setImporting(true);
+                          const res = await seedLeadsFromExcel();
+                          if (res.success) {
+                            alert(res.message);
+                            await loadAllData(); // Reload UI state
+                          } else {
+                            alert('Hata: ' + res.message);
+                          }
+                        } catch (err: any) {
+                          alert('Hata oluştu: ' + err.message);
+                        } finally {
+                          setImporting(false);
+                        }
+                      }
+                    }
+                  }}
+                  disabled={importing}
+                  className="glow-btn"
+                  style={{
+                    background: 'var(--primary-gradient)',
+                    padding: '0.6rem 1.25rem',
+                    borderRadius: '8px',
+                    fontWeight: 700
+                  }}
+                >
+                  {importing ? 'Aktarılıyor...' : 'Sıfırla ve Yeni Excel Verilerini Yükle'}
+                </button>
+              </div>
+
+              {/* Import Type Toggle */}
+              <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '1rem' }}>
+                <button
+                  onClick={() => { setImportType('leads'); setExcelHeaders([]); setExcelRows([]); setImportSuccess(false); }}
+                  className="glow-btn animate-fade-in"
+                  style={{
+                    background: importType === 'leads' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid var(--glass-border)',
+                    boxShadow: importType === 'leads' ? 'var(--shadow-glow)' : 'none',
+                    padding: '0.5rem 1.25rem',
+                    borderRadius: '8px',
+                    fontWeight: 600,
+                    color: importType === 'leads' ? '#fff' : 'var(--text-secondary)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Müşteri Listesi Yükle (Leads)
+                </button>
+                <button
+                  onClick={() => { setImportType('properties'); setExcelHeaders([]); setExcelRows([]); setImportSuccess(false); }}
+                  className="glow-btn animate-fade-in"
+                  style={{
+                    background: importType === 'properties' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid var(--glass-border)',
+                    boxShadow: importType === 'properties' ? 'var(--shadow-glow)' : 'none',
+                    padding: '0.5rem 1.25rem',
+                    borderRadius: '8px',
+                    fontWeight: 600,
+                    color: importType === 'properties' ? '#fff' : 'var(--text-secondary)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Daire Portföyü Yükle (Properties)
+                </button>
+              </div>
 
               {/* Step 1: File Upload */}
               {excelHeaders.length === 0 && !importSuccess && (
@@ -1579,7 +3159,7 @@ export default function Home() {
                     }}
                   />
                   <QrCode size={48} style={{ color: 'var(--color-primary)', marginBottom: '1rem', opacity: 0.7 }} />
-                  <h4 style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '0.5rem' }}>Dosyayı Seçin veya Sürükleyin</h4>
+                  <h4 style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '0.5rem' }}>{importType === 'leads' ? 'Müşteri Excel Dosyasını Seçin' : 'Daire/Portföy Excel Dosyasını Seçin'}</h4>
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                     Desteklenen formatlar: **.xlsx, .xls, .csv**
                   </p>
@@ -1595,17 +3175,17 @@ export default function Home() {
                     color: 'var(--color-success)',
                     border: '1px solid rgba(52, 211, 153, 0.2)'
                   }}>
-                    <span>Mükerrer Kayıt Politikası: **Mükerrer Kayıtlara İzin Verilir (Keep Both)**</span>
+                    <span>Politika: **Mükerrer Kayıtlara İzin Verilir (Keep Both)**</span>
                   </div>
                 </div>
               )}
 
-              {/* Step 2: Column Mapping */}
+              {/* Step 2: Column Mapping / Preview */}
               {excelHeaders.length > 0 && (
                 <div>
                   <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid var(--glass-border)' }}>
                     <p style={{ fontSize: '0.9rem', fontWeight: 600 }}>
-                      ✓ **{excelRows.length} adet veri satırı algılandı.** Lütfen aşağıdaki CRM alanlarının Excel tablonuzda hangi kolona denk geldiğini eşleştirin.
+                      ✓ **{excelRows.length} adet veri satırı algılandı.** {importType === 'leads' ? 'Lütfen aşağıdaki CRM alanlarının Excel tablonuzda hangi kolona denk geldiğini eşleştirin.' : 'Daire portföyü için kolon eşleştirme otomatik yapılacaktır.'}
                     </p>
                   </div>
 
@@ -1628,141 +3208,151 @@ export default function Home() {
                     </div>
                   )}
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
-                    {/* CRM Field Selectors */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Zorunlu Alanlar</h4>
-                      
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label style={{ fontWeight: 'bold' }}>Adı Soyadı (Müşteri İsmi) *</label>
-                        <select 
-                          className="form-control"
-                          required
-                          value={columnMap.name}
-                          onChange={(e) => setColumnMap({ ...columnMap, name: e.target.value })}
-                        >
-                          <option value="">-- Kolon Seçin --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
+                  {importType === 'properties' && (
+                    <div style={{ background: 'rgba(16, 185, 129, 0.08)', padding: '1rem', borderRadius: '10px', marginBottom: '1.5rem', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--color-success)', fontWeight: 600 }}>
+                        ℹ️ ÖNTAŞ formatı otomatik algılama aktiftir. Parsel, Bağımsız Bölüm No, Kat, Oda Sayısı, Alanlar, Fiyat ve Portföy Durumu (Açık/Kapalı/NOVA) kolonları otomatik eşleştirilecektir.
+                      </p>
+                    </div>
+                  )}
+
+                  {importType === 'leads' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
+                      {/* CRM Field Selectors */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Zorunlu Alanlar</h4>
+                        
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label style={{ fontWeight: 'bold' }}>Adı Soyadı (Müşteri İsmi) *</label>
+                          <select 
+                            className="form-control"
+                            required
+                            value={columnMap.name}
+                            onChange={(e) => setColumnMap({ ...columnMap, name: e.target.value })}
+                          >
+                            <option value="">-- Kolon Seçin --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label style={{ fontWeight: 'bold' }}>Telefon Numarası *</label>
+                          <select 
+                            className="form-control"
+                            required
+                            value={columnMap.phone}
+                            onChange={(e) => setColumnMap({ ...columnMap, phone: e.target.value })}
+                          >
+                            <option value="">-- Kolon Seçin --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem', marginTop: '1rem' }}>Randevu & Bütçe Alanları</h4>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Randevu Tarihi (Varsa otomatik randevu açılır)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.appointment_date}
+                            onChange={(e) => setColumnMap({ ...columnMap, appointment_date: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Tahmini Müşteri Bütçesi</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.budget}
+                            onChange={(e) => setColumnMap({ ...columnMap, budget: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
                       </div>
 
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label style={{ fontWeight: 'bold' }}>Telefon Numarası *</label>
-                        <select 
-                          className="form-control"
-                          required
-                          value={columnMap.phone}
-                          onChange={(e) => setColumnMap({ ...columnMap, phone: e.target.value })}
-                        >
-                          <option value="">-- Kolon Seçin --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                      </div>
+                      {/* Column 2 details */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>İlgi & Profil Alanları</h4>
 
-                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem', marginTop: '1rem' }}>Randevu & Bütçe Alanları</h4>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Müşteri Kaynağı (Instagram, WhatsApp vb.)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.source}
+                            onChange={(e) => setColumnMap({ ...columnMap, source: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
 
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label>Randevu Tarihi (Varsa otomatik randevu açılır)</label>
-                        <select 
-                          className="form-control"
-                          value={columnMap.appointment_date}
-                          onChange={(e) => setColumnMap({ ...columnMap, appointment_date: e.target.value })}
-                        >
-                          <option value="">-- Eşleştirme Yok (Atla) --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                      </div>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>İlgilendiği Daire Tipi / Oda Sayısı</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.room_count}
+                            onChange={(e) => setColumnMap({ ...columnMap, room_count: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
 
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label>Tahmini Müşteri Bütçesi</label>
-                        <select 
-                          className="form-control"
-                          value={columnMap.budget}
-                          onChange={(e) => setColumnMap({ ...columnMap, budget: e.target.value })}
-                        >
-                          <option value="">-- Eşleştirme Yok (Atla) --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Yaşadığı Şehir</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.current_location}
+                            onChange={(e) => setColumnMap({ ...columnMap, current_location: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>İlgilendiği Bölge (Altınoluk, Akçay vb.)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.target_region}
+                            onChange={(e) => setColumnMap({ ...columnMap, target_region: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Sıcaklık Durumu (Lead Sonucu / Aksiyon)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.warmth_outcome}
+                            onChange={(e) => setColumnMap({ ...columnMap, warmth_outcome: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Müşteri Özel Notları / Açıklamalar</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.notes}
+                            onChange={(e) => setColumnMap({ ...columnMap, notes: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
                       </div>
                     </div>
-
-                    {/* Column 2 details */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                      <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>İlgi & Profil Alanları</h4>
-
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label>Müşteri Kaynağı (Instagram, WhatsApp vb.)</label>
-                        <select 
-                          className="form-control"
-                          value={columnMap.source}
-                          onChange={(e) => setColumnMap({ ...columnMap, source: e.target.value })}
-                        >
-                          <option value="">-- Eşleştirme Yok (Atla) --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label>İlgilendiği Daire Tipi / Oda Sayısı</label>
-                        <select 
-                          className="form-control"
-                          value={columnMap.room_count}
-                          onChange={(e) => setColumnMap({ ...columnMap, room_count: e.target.value })}
-                        >
-                          <option value="">-- Eşleştirme Yok (Atla) --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label>Yaşadığı Şehir</label>
-                        <select 
-                          className="form-control"
-                          value={columnMap.current_location}
-                          onChange={(e) => setColumnMap({ ...columnMap, current_location: e.target.value })}
-                        >
-                          <option value="">-- Eşleştirme Yok (Atla) --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label>İlgilendiği Bölge (Altınoluk, Akçay vb.)</label>
-                        <select 
-                          className="form-control"
-                          value={columnMap.target_region}
-                          onChange={(e) => setColumnMap({ ...columnMap, target_region: e.target.value })}
-                        >
-                          <option value="">-- Eşleştirme Yok (Atla) --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label>Sıcaklık Durumu (Lead Sonucu / Aksiyon)</label>
-                        <select 
-                          className="form-control"
-                          value={columnMap.warmth_outcome}
-                          onChange={(e) => setColumnMap({ ...columnMap, warmth_outcome: e.target.value })}
-                        >
-                          <option value="">-- Eşleştirme Yok (Atla) --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                      </div>
-
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label>Müşteri Özel Notları / Açıklamalar</label>
-                        <select 
-                          className="form-control"
-                          value={columnMap.notes}
-                          onChange={(e) => setColumnMap({ ...columnMap, notes: e.target.value })}
-                        >
-                          <option value="">-- Eşleştirme Yok (Atla) --</option>
-                          {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
+                  )}
 
                   {/* Excel Preview Block */}
                   <div style={{ marginBottom: '2rem' }}>
@@ -1815,7 +3405,7 @@ export default function Home() {
                         </>
                       ) : (
                         <>
-                          <Check size={18} /> {excelRows.length} Müşteriyi CRM'e Aktar
+                          <Check size={18} /> {excelRows.length} {importType === 'leads' ? 'Müşteriyi CRM\'e Aktar' : 'Daireyi Portföye Aktar'}
                         </>
                       )}
                     </button>
@@ -1831,16 +3421,19 @@ export default function Home() {
                   </div>
                   <h3 style={{ fontSize: '1.3rem', fontWeight: 800, marginBottom: '0.5rem' }}>Aktarım Başarıyla Tamamlandı!</h3>
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-                    **{importCount} adet müşteri kaydı** Excel'den başarıyla CRM veritabanınıza yüklenmiştir. Randevu tarihleri bulunan müşteriler için otomatik olarak randevular planlanmıştır.
+                    {importType === 'leads' 
+                      ? `**${importCount} adet müşteri kaydı** Excel'den başarıyla CRM veritabanınıza yüklenmiştir. Randevu tarihleri bulunan müşteriler için otomatik olarak randevular planlanmıştır.`
+                      : `**${importCount} adet daire portföy kaydı** Excel'den başarıyla envanter veritabanınıza yüklenmiştir.`
+                    }
                   </p>
                   <button
                     onClick={() => {
                       setImportSuccess(false);
-                      setActiveTab('dashboard');
+                      setActiveTab(importType === 'leads' ? 'dashboard' : 'matchmaker');
                     }}
                     className="glow-btn"
                   >
-                    Müşteri Listesine (CRM) Dön
+                    {importType === 'leads' ? 'Müşteri Listesine (CRM) Dön' : 'Portföy & Eşleştiriciye Git'}
                   </button>
                 </div>
               )}
@@ -1848,6 +3441,476 @@ export default function Home() {
           )}
         </main>
       )}
+        {/* ADD APPOINTMENT MODAL */}
+        {showAddAppModal && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 2000,
+            backdropFilter: 'blur(5px)',
+            padding: '1rem'
+          }} onClick={() => setShowAddAppModal(false)}>
+            <div style={{
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--glass-border)',
+              borderRadius: '12px',
+              padding: '2rem',
+              maxWidth: '500px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              position: 'relative'
+            }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>Yeni Randevu Planla</h3>
+                <button 
+                  type="button"
+                  onClick={() => setShowAddAppModal(false)}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveAppModalSubmit}>
+                <div className="form-group" style={{ position: 'relative' }}>
+                  <label>Müşteri Seçin *</label>
+                  <input 
+                    type="text" 
+                    required
+                    className="form-control"
+                    placeholder="Müşteri İsim veya Telefon Ara..."
+                    value={appSearchQuery}
+                    onChange={(e) => {
+                      setAppSearchQuery(e.target.value);
+                      setShowSearchDropdown(true);
+                      setSelectedLeadForApp(null);
+                    }}
+                    onFocus={() => setShowSearchDropdown(true)}
+                  />
+                  {showSearchDropdown && appSearchQuery.trim() !== '' && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--glass-border)',
+                      borderRadius: '8px',
+                      boxShadow: 'var(--shadow-card)',
+                      zIndex: 2100,
+                      maxHeight: '200px',
+                      overflowY: 'auto'
+                    }}>
+                      {leads
+                        .filter(l => 
+                          l.name.toLowerCase().includes(appSearchQuery.toLowerCase()) || 
+                          l.phone.includes(appSearchQuery)
+                        )
+                        .slice(0, 10)
+                        .map(l => (
+                          <div 
+                            key={l.id}
+                            onClick={() => {
+                              setSelectedLeadForApp(l);
+                              setAppSearchQuery(`${l.name} (${l.phone})`);
+                              setShowSearchDropdown(false);
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-hover)'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                            style={{
+                              padding: '0.6rem 0.85rem',
+                              cursor: 'pointer',
+                              borderBottom: '1px solid var(--glass-border)',
+                              fontSize: '0.85rem',
+                              transition: 'background 0.2s'
+                            }}
+                          >
+                            <strong>{l.name}</strong> - <span>{l.phone}</span>
+                          </div>
+                        ))
+                      }
+                    </div>
+                  )}
+                  {selectedLeadForApp && (() => {
+                    const matchedProp = getMatchedPropertyForLead(selectedLeadForApp);
+                    return (
+                      <div style={{
+                        marginTop: '0.75rem',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid var(--glass-border)',
+                        padding: '1rem',
+                        borderRadius: '8px',
+                        fontSize: '0.8rem',
+                        color: 'var(--text-secondary)'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.3rem' }}>
+                          <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Seçilen Müşteri Bilgileri</span>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              setSelectedLeadForApp(null);
+                              setAppSearchQuery('');
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--color-danger)',
+                              cursor: 'pointer',
+                              fontSize: '0.75rem',
+                              fontWeight: 600
+                            }}
+                          >
+                            Temizle
+                          </button>
+                        </div>
+                        <p style={{ margin: '0 0 0.25rem 0' }}>👤 <strong>İsim Soyisim:</strong> <span style={{ color: 'var(--text-primary)' }}>{selectedLeadForApp.name}</span></p>
+                        <p style={{ margin: '0 0 0.25rem 0' }}>📞 <strong>Telefon:</strong> <span style={{ color: 'var(--text-primary)' }}>{selectedLeadForApp.phone}</span></p>
+                        <p style={{ margin: '0 0 0.5rem 0' }}>🏠 <strong>Talep Ettiği Daire:</strong> <span style={{ color: 'var(--text-primary)' }}>{selectedLeadForApp.room_count || 'Belirtilmedi'} Oda ({selectedLeadForApp.property_type || 'Belirtilmedi'})</span></p>
+                        
+                        {matchedProp ? (
+                          <div style={{
+                            padding: '0.5rem',
+                            background: 'rgba(16, 185, 129, 0.08)',
+                            border: '1px solid rgba(16, 185, 129, 0.15)',
+                            borderRadius: '6px',
+                            marginTop: '0.5rem'
+                          }}>
+                            <span style={{ color: 'var(--color-success)', fontWeight: 700, display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem' }}>🎯 Eşleşen Daire:</span>
+                            <p style={{ margin: '0 0 0.15rem 0' }}>🏢 <strong>Parsel:</strong> {matchedProp.parsel || '-'} / <strong>Daire No:</strong> {matchedProp.bag_bol_no || '-'}</p>
+                            <p style={{ margin: '0', color: 'var(--color-success)', fontWeight: 700, fontSize: '0.85rem' }}>💰 <strong>Daire Fiyatı (DB):</strong> {formatCurrency(matchedProp.price)}</p>
+                          </div>
+                        ) : (
+                          <div style={{
+                            padding: '0.5rem',
+                            background: 'rgba(239, 68, 68, 0.08)',
+                            border: '1px solid rgba(239, 68, 68, 0.15)',
+                            borderRadius: '6px',
+                            marginTop: '0.5rem',
+                            fontSize: '0.75rem',
+                            fontStyle: 'italic',
+                            color: 'var(--color-danger)'
+                          }}>
+                            ⚠️ Bütçeye/Odaya uygun eşleşen daire bulunamadı.
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="form-group">
+                  <label>Randevu Tarih ve Saati *</label>
+                  <input 
+                    type="datetime-local" 
+                    required
+                    className="form-control"
+                    value={appDateTime}
+                    onChange={(e) => setAppDateTime(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Randevu Tipi *</label>
+                  <select 
+                    required
+                    className="form-control"
+                    value={appType}
+                    onChange={(e) => setAppType(e.target.value)}
+                  >
+                    <option value="">-- Randevu Tipi Seçin --</option>
+                    <option value="Şantiyede gösterim">Şantiyede gösterim</option>
+                    <option value="Ofiste Proje Tanıtım">Ofiste Proje Tanıtım</option>
+                    <option value="Sözleşme Randevusu">Sözleşme Randevusu</option>
+                    <option value="Rutin/Tekrarlayan Ziyaret">Rutin/Tekrarlayan Ziyaret</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Randevu Yeri / Mülk Adresi</label>
+                  <input 
+                    type="text" 
+                    className="form-control"
+                    placeholder="Örn: Altınoluk 3+1 Daire Yerinde Gösterim"
+                    value={appLocation}
+                    onChange={(e) => setAppLocation(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Açıklama / Özel Notlar</label>
+                  <textarea 
+                    className="form-control"
+                    placeholder="Özel beklentiler..."
+                    value={appNotes}
+                    onChange={(e) => setAppNotes(e.target.value)}
+                  />
+                </div>
+
+                <button type="submit" className="glow-btn" style={{ width: '100%', justifyContent: 'center', marginTop: '1.5rem' }}>
+                  <Check size={18} /> Randevu Kaydet
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* EDIT APPOINTMENT MODAL */}
+        {showEditAppModal && selectedAppToEdit && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 2000,
+            backdropFilter: 'blur(5px)',
+            padding: '1rem'
+          }} onClick={() => setShowEditAppModal(false)}>
+            <div style={{
+              background: 'var(--bg-secondary)',
+              border: '1px solid var(--glass-border)',
+              borderRadius: '12px',
+              padding: '2rem',
+              maxWidth: '500px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              position: 'relative'
+            }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>Randevu Düzenle</h3>
+                <button 
+                  type="button"
+                  onClick={() => setShowEditAppModal(false)}
+                  style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <form onSubmit={handleSaveAppModalSubmit}>
+                <div className="form-group" style={{ position: 'relative' }}>
+                  <label>Müşteri Seçin *</label>
+                  <input 
+                    type="text" 
+                    required
+                    className="form-control"
+                    placeholder="Müşteri İsim veya Telefon Ara..."
+                    value={appSearchQuery}
+                    onChange={(e) => {
+                      setAppSearchQuery(e.target.value);
+                      setShowSearchDropdown(true);
+                      setSelectedLeadForApp(null);
+                    }}
+                    onFocus={() => setShowSearchDropdown(true)}
+                  />
+                  {showSearchDropdown && appSearchQuery.trim() !== '' && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--glass-border)',
+                      borderRadius: '8px',
+                      boxShadow: 'var(--shadow-card)',
+                      zIndex: 2100,
+                      maxHeight: '200px',
+                      overflowY: 'auto'
+                    }}>
+                      {leads
+                        .filter(l => 
+                          l.name.toLowerCase().includes(appSearchQuery.toLowerCase()) || 
+                          l.phone.includes(appSearchQuery)
+                        )
+                        .slice(0, 10)
+                        .map(l => (
+                          <div 
+                            key={l.id}
+                            onClick={() => {
+                              setSelectedLeadForApp(l);
+                              setAppSearchQuery(`${l.name} (${l.phone})`);
+                              setShowSearchDropdown(false);
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-hover)'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                            style={{
+                              padding: '0.6rem 0.85rem',
+                              cursor: 'pointer',
+                              borderBottom: '1px solid var(--glass-border)',
+                              fontSize: '0.85rem',
+                              transition: 'background 0.2s'
+                            }}
+                          >
+                            <strong>{l.name}</strong> - <span>{l.phone}</span>
+                          </div>
+                        ))
+                      }
+                    </div>
+                  )}
+                  {selectedLeadForApp && (() => {
+                    const matchedProp = getMatchedPropertyForLead(selectedLeadForApp);
+                    return (
+                      <div style={{
+                        marginTop: '0.75rem',
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid var(--glass-border)',
+                        padding: '1rem',
+                        borderRadius: '8px',
+                        fontSize: '0.8rem',
+                        color: 'var(--text-secondary)'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.3rem' }}>
+                          <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Seçilen Müşteri Bilgileri</span>
+                          <button 
+                            type="button" 
+                            onClick={() => {
+                              setSelectedLeadForApp(null);
+                              setAppSearchQuery('');
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--color-danger)',
+                              cursor: 'pointer',
+                              fontSize: '0.75rem',
+                              fontWeight: 600
+                            }}
+                          >
+                            Temizle
+                          </button>
+                        </div>
+                        <p style={{ margin: '0 0 0.25rem 0' }}>👤 <strong>İsim Soyisim:</strong> <span style={{ color: 'var(--text-primary)' }}>{selectedLeadForApp.name}</span></p>
+                        <p style={{ margin: '0 0 0.25rem 0' }}>📞 <strong>Telefon:</strong> <span style={{ color: 'var(--text-primary)' }}>{selectedLeadForApp.phone}</span></p>
+                        <p style={{ margin: '0 0 0.5rem 0' }}>🏠 <strong>Talep Ettiği Daire:</strong> <span style={{ color: 'var(--text-primary)' }}>{selectedLeadForApp.room_count || 'Belirtilmedi'} Oda ({selectedLeadForApp.property_type || 'Belirtilmedi'})</span></p>
+                        
+                        {matchedProp ? (
+                          <div style={{
+                            padding: '0.5rem',
+                            background: 'rgba(16, 185, 129, 0.08)',
+                            border: '1px solid rgba(16, 185, 129, 0.15)',
+                            borderRadius: '6px',
+                            marginTop: '0.5rem'
+                          }}>
+                            <span style={{ color: 'var(--color-success)', fontWeight: 700, display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem' }}>🎯 Eşleşen Daire:</span>
+                            <p style={{ margin: '0 0 0.15rem 0' }}>🏢 <strong>Parsel:</strong> {matchedProp.parsel || '-'} / <strong>Daire No:</strong> {matchedProp.bag_bol_no || '-'}</p>
+                            <p style={{ margin: '0', color: 'var(--color-success)', fontWeight: 700, fontSize: '0.85rem' }}>💰 <strong>Daire Fiyatı (DB):</strong> {formatCurrency(matchedProp.price)}</p>
+                          </div>
+                        ) : (
+                          <div style={{
+                            padding: '0.5rem',
+                            background: 'rgba(239, 68, 68, 0.08)',
+                            border: '1px solid rgba(239, 68, 68, 0.15)',
+                            borderRadius: '6px',
+                            marginTop: '0.5rem',
+                            fontSize: '0.75rem',
+                            fontStyle: 'italic',
+                            color: 'var(--color-danger)'
+                          }}>
+                            ⚠️ Bütçeye/Odaya uygun eşleşen daire bulunamadı.
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="form-group">
+                  <label>Randevu Tarih ve Saati *</label>
+                  <input 
+                    type="datetime-local" 
+                    required
+                    className="form-control"
+                    value={appDateTime}
+                    onChange={(e) => setAppDateTime(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Randevu Durumu *</label>
+                  <select 
+                    className="form-control"
+                    value={appStatus}
+                    onChange={(e) => setAppStatusState(e.target.value as any)}
+                  >
+                    <option value="pending">Bekliyor</option>
+                    <option value="completed">Tamamlandı</option>
+                    <option value="cancelled">İptal Edildi</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Randevu Tipi *</label>
+                  <select 
+                    required
+                    className="form-control"
+                    value={appType}
+                    onChange={(e) => setAppType(e.target.value)}
+                  >
+                    <option value="">-- Randevu Tipi Seçin --</option>
+                    <option value="Şantiyede gösterim">Şantiyede gösterim</option>
+                    <option value="Ofiste Proje Tanıtım">Ofiste Proje Tanıtım</option>
+                    <option value="Sözleşme Randevusu">Sözleşme Randevusu</option>
+                    <option value="Rutin/Tekrarlayan Ziyaret">Rutin/Tekrarlayan Ziyaret</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Randevu Yeri / Mülk Adresi</label>
+                  <input 
+                    type="text" 
+                    className="form-control"
+                    value={appLocation}
+                    onChange={(e) => setAppLocation(e.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Açıklama / Özel Notlar</label>
+                  <textarea 
+                    className="form-control"
+                    value={appNotes}
+                    onChange={(e) => setAppNotes(e.target.value)}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginTop: '2rem' }}>
+                  <button 
+                    type="button" 
+                    onClick={() => handleDeleteApp(selectedAppToEdit.id)}
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.2)',
+                      color: 'var(--color-danger)',
+                      padding: '0.5rem 1rem',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                      fontSize: '0.85rem'
+                    }}
+                  >
+                    Randevuyu Sil
+                  </button>
+                  <button type="submit" className="glow-btn" style={{ flexGrow: 1, justifyContent: 'center' }}>
+                    <Check size={18} /> Güncelle
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1883,9 +3946,28 @@ export default function Home() {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-          {lead.occupation && (
+          <p style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+            <Calendar size={12} style={{ color: 'var(--color-primary)' }} /> 
+            <span>Geliş Tarihi: </span>
+            <strong style={{ color: 'var(--text-primary)' }}>{formatDateToShow(lead.created_at)}</strong>
+          </p>
+          {lead.lead_status && (
             <p style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-              <Briefcase size={12} /> {lead.occupation} ({lead.marital_status || 'Evlilik Durumu Bilinmiyor'})
+              <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: 'var(--color-primary)' }}></span>
+              <span>Durum: </span>
+              <strong style={{ color: 'var(--text-primary)' }}>{lead.lead_status}</strong>
+            </p>
+          )}
+          {lead.customer_question && (
+            <p style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <span>❓ Soru: </span>
+              <span style={{ color: 'var(--text-primary)' }}>{lead.customer_question}</span>
+            </p>
+          )}
+          {lead.rejection_reason && (
+            <p style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <span style={{ color: 'var(--color-danger)' }}>🚫 Red Nedeni: </span>
+              <span style={{ color: 'var(--text-primary)' }}>{lead.rejection_reason}</span>
             </p>
           )}
           {lead.current_location && (
@@ -1924,7 +4006,7 @@ export default function Home() {
               <Phone size={12} />
             </a>
             <a 
-              href={`https://api.whatsapp.com/send?phone=${lead.phone.replace(/\D/g, '')}`}
+              href={`https://api.whatsapp.com/send?phone=${(lead.phone || '').replace(/\D/g, '')}`}
               target="_blank"
               rel="noreferrer"
               className="glow-btn"

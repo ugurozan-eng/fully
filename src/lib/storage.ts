@@ -7,8 +7,18 @@ const isClient = () => typeof window !== 'undefined';
 // LocalStorage helpers
 const getLocal = <T>(key: string, defaultValue: T): T => {
   if (!isClient()) return defaultValue;
-  const stored = localStorage.getItem(key);
-  return stored ? JSON.parse(stored) : defaultValue;
+  try {
+    const stored = localStorage.getItem(key);
+    if (!stored) return defaultValue;
+    const parsed = JSON.parse(stored);
+    if (Array.isArray(defaultValue) && !Array.isArray(parsed)) {
+      return defaultValue;
+    }
+    return parsed as T;
+  } catch (e) {
+    console.error(`Error parsing localStorage key "${key}":`, e);
+    return defaultValue;
+  }
 };
 
 const setLocal = (key: string, data: any) => {
@@ -190,6 +200,17 @@ export const StorageManager = {
 
     if (dbActive) {
       const res = await actions.deleteProperty(id);
+      return res.success;
+    }
+    return true;
+  },
+
+  async clearProperties(): Promise<boolean> {
+    const dbActive = await this.isDbActive();
+    setLocal('fully-properties', []);
+
+    if (dbActive) {
+      const res = await actions.clearProperties();
       return res.success;
     }
     return true;
