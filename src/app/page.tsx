@@ -675,18 +675,36 @@ export default function Home() {
 
       // Run warmth migration asynchronously in the background
       if (typeof window !== 'undefined') {
-        const migrated = localStorage.getItem('fully-warmth-migrated-v1');
-        if (migrated !== 'true') {
+        try {
+          const migrated = localStorage.getItem('fully-warmth-migrated-v1');
+          if (migrated !== 'true') {
+            runWarmthMigration()
+              .then((res) => {
+                if (res.success) {
+                  try {
+                    localStorage.setItem('fully-warmth-migrated-v1', 'true');
+                  } catch (writeErr) {
+                    console.error('Failed to write migration flag:', writeErr);
+                  }
+                  // Reload data to reflect migrated state
+                  loadAllData();
+                }
+              })
+              .catch((err) => {
+                console.error('Failed to run warmth migration on mount:', err);
+              });
+          }
+        } catch (readErr) {
+          console.error('Failed to read migration flag:', readErr);
+          // Safe fallback: run the migration without reading/writing flag if storage is disabled
           runWarmthMigration()
             .then((res) => {
               if (res.success) {
-                localStorage.setItem('fully-warmth-migrated-v1', 'true');
-                // Reload data to reflect migrated state
                 loadAllData();
               }
             })
             .catch((err) => {
-              console.error('Failed to run warmth migration on mount:', err);
+              console.error('Failed to run warmth migration on mount fallback:', err);
             });
         }
       }
@@ -3947,7 +3965,7 @@ export default function Home() {
     return (
       <div 
         key={lead.id} 
-        className="glass-panel animate-fade-in" 
+        className="glass-panel" 
         style={{ 
           background: 'var(--bg-tertiary)', 
           padding: '1.25rem',

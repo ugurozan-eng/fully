@@ -23,7 +23,11 @@ const getLocal = <T>(key: string, defaultValue: T): T => {
 
 const setLocal = (key: string, data: any) => {
   if (isClient()) {
-    localStorage.setItem(key, JSON.stringify(data));
+    try {
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (e) {
+      console.error(`Error writing to localStorage key "${key}":`, e);
+    }
   }
 };
 

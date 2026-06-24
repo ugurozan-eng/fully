@@ -23,7 +23,12 @@ export default function Sidebar({ activeTab, setActiveTab, isOpenMobile, setIsOp
 
   useEffect(() => {
     // Load theme from localStorage
-    const savedTheme = localStorage.getItem('fully-theme') || 'midnight-neon';
+    let savedTheme = 'midnight-neon';
+    try {
+      savedTheme = localStorage.getItem('fully-theme') || 'midnight-neon';
+    } catch (e) {
+      console.error('Failed to read theme from localStorage:', e);
+    }
     setTheme(savedTheme);
     document.documentElement.setAttribute('data-theme', savedTheme);
 
@@ -41,7 +46,11 @@ export default function Sidebar({ activeTab, setActiveTab, isOpenMobile, setIsOp
   const toggleTheme = () => {
     const nextTheme = theme === 'midnight-neon' ? 'forest-ocean' : 'midnight-neon';
     setTheme(nextTheme);
-    localStorage.setItem('fully-theme', nextTheme);
+    try {
+      localStorage.setItem('fully-theme', nextTheme);
+    } catch (e) {
+      console.error('Failed to save theme to localStorage:', e);
+    }
     document.documentElement.setAttribute('data-theme', nextTheme);
   };
 
