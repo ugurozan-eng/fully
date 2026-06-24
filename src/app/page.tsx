@@ -670,19 +670,26 @@ export default function Home() {
 
   useEffect(() => {
     const initAndLoad = async () => {
-      // Run the warmth migration once to update database records for existing leads
+      // Load data immediately to prevent blocking the UI
+      loadAllData();
+
+      // Run warmth migration asynchronously in the background
       if (typeof window !== 'undefined') {
         const migrated = localStorage.getItem('fully-warmth-migrated-v1');
         if (migrated !== 'true') {
-          try {
-            await runWarmthMigration();
-            localStorage.setItem('fully-warmth-migrated-v1', 'true');
-          } catch (err) {
-            console.error('Failed to run warmth migration on mount:', err);
-          }
+          runWarmthMigration()
+            .then((res) => {
+              if (res.success) {
+                localStorage.setItem('fully-warmth-migrated-v1', 'true');
+                // Reload data to reflect migrated state
+                loadAllData();
+              }
+            })
+            .catch((err) => {
+              console.error('Failed to run warmth migration on mount:', err);
+            });
         }
       }
-      loadAllData();
     };
     initAndLoad();
   }, []);
@@ -1581,11 +1588,9 @@ export default function Home() {
             left: 0,
             width: '100vw',
             height: '100vh',
-            background: 'rgba(0, 0, 0, 0.4)',
-            backdropFilter: 'blur(3px)',
+            background: 'rgba(0, 0, 0, 0.55)',
             zIndex: 190,
           }}
-          className="animate-fade-in"
         />
       )}
 
@@ -3478,7 +3483,6 @@ export default function Home() {
             justifyContent: 'center',
             alignItems: 'center',
             zIndex: 2000,
-            backdropFilter: 'blur(5px)',
             padding: '1rem'
           }} onClick={() => setShowAddAppModal(false)}>
             <div style={{
@@ -3699,7 +3703,6 @@ export default function Home() {
             justifyContent: 'center',
             alignItems: 'center',
             zIndex: 2000,
-            backdropFilter: 'blur(5px)',
             padding: '1rem'
           }} onClick={() => setShowEditAppModal(false)}>
             <div style={{
