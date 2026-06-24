@@ -694,8 +694,10 @@ export default function Home() {
       alert('Lütfen Ad, Telefon ve Sıcaklık Seviyesi (Warmth) alanlarını doldurun.');
       return;
     }
+    const isNewLead = !editingLead;
+    const leadId = editingLead ? editingLead.id : crypto.randomUUID();
     const leadToSave: Lead = {
-      id: editingLead ? editingLead.id : crypto.randomUUID(),
+      id: leadId,
       name: newLead.name,
       phone: newLead.phone,
       email: newLead.email || '',
@@ -743,7 +745,14 @@ export default function Home() {
       notes: '',
       created_at: getTodayDateString(),
     });
-    setActiveTab('dashboard');
+
+    if (isNewLead) {
+      setActiveTab('matchmaker');
+      setMatchmakerSubTab('matching');
+      setSelectedLeadId(leadId);
+    } else {
+      setActiveTab('dashboard');
+    }
   };
 
   // Start Editing Lead
