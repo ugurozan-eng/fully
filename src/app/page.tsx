@@ -1075,79 +1075,81 @@ export default function Home() {
     const weekDays = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '8px' }}>
-          {weekDays.map(wd => (
-            <div key={wd} style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)', padding: '0.4rem' }}>
-              {wd}
-            </div>
-          ))}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', background: 'var(--glass-border)', padding: '4px', borderRadius: '8px' }}>
-          {cells.map((cell, idx) => {
-            const dateKey = cell.date.toDateString();
-            const dayApps = appointments.filter(a => isSameDay(cell.date, a.date_time));
-            const isToday = new Date().toDateString() === dateKey;
-
-            return (
-              <div 
-                key={idx}
-                onClick={() => openAddAppModal(cell.date)}
-                style={{
-                  minHeight: '120px',
-                  background: isToday ? 'rgba(255, 106, 0, 0.05)' : cell.isCurrentMonth ? 'var(--bg-secondary)' : 'rgba(255,255,255,0.01)',
-                  border: isToday ? '1px solid var(--color-primary)' : '1px solid var(--glass-border)',
-                  borderRadius: '6px',
-                  padding: '0.5rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.35rem',
-                  cursor: 'pointer',
-                  position: 'relative'
-                }}
-              >
-                <span style={{ 
-                  fontSize: '0.85rem', 
-                  fontWeight: isToday ? 800 : 500, 
-                  color: isToday ? 'var(--color-primary)' : cell.isCurrentMonth ? 'var(--text-primary)' : 'var(--text-muted)' 
-                }}>
-                  {cell.date.getDate()}
-                </span>
-                
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }} onClick={(e) => e.stopPropagation()}>
-                  {dayApps.slice(0, 3).map(a => (
-                    <div 
-                      key={a.id}
-                      onClick={() => openEditAppModal(a)}
-                      onMouseEnter={() => setHoveredAppId(a.id)}
-                      onMouseLeave={() => setHoveredAppId(null)}
-                      style={{
-                        padding: '0.25rem 0.4rem',
-                        borderRadius: '4px',
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                        background: a.status === 'completed' ? 'rgba(16, 185, 129, 0.15)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                        color: a.status === 'completed' ? 'var(--color-success)' : a.status === 'cancelled' ? 'var(--color-danger)' : 'var(--color-warning)',
-                        border: `1px solid ${a.status === 'completed' ? 'rgba(16, 185, 129, 0.25)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        position: 'relative'
-                      }}
-                    >
-                      {new Date(a.date_time).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} - {a.lead_name}
-                      {renderHoverCard(a)}
-                    </div>
-                  ))}
-                  {dayApps.length > 3 && (
-                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                      +{dayApps.length - 3} randevu daha
-                    </span>
-                  )}
-                </div>
+      <div style={{ width: '100%', overflowX: 'auto' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: '700px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', textAlign: 'center', marginBottom: '8px' }}>
+            {weekDays.map(wd => (
+              <div key={wd} style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--text-secondary)', padding: '0.4rem' }}>
+                {wd}
               </div>
-            );
-          })}
+            ))}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '4px', background: 'var(--glass-border)', padding: '4px', borderRadius: '8px' }}>
+            {cells.map((cell, idx) => {
+              const dateKey = cell.date.toDateString();
+              const dayApps = appointments.filter(a => isSameDay(cell.date, a.date_time));
+              const isToday = new Date().toDateString() === dateKey;
+
+              return (
+                <div 
+                  key={idx}
+                  onClick={() => openAddAppModal(cell.date)}
+                  style={{
+                    minHeight: '120px',
+                    background: isToday ? 'rgba(255, 106, 0, 0.05)' : cell.isCurrentMonth ? 'var(--bg-secondary)' : 'rgba(255,255,255,0.01)',
+                    border: isToday ? '1px solid var(--color-primary)' : '1px solid var(--glass-border)',
+                    borderRadius: '6px',
+                    padding: '0.5rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.35rem',
+                    cursor: 'pointer',
+                    position: 'relative'
+                  }}
+                >
+                  <span style={{ 
+                    fontSize: '0.85rem', 
+                    fontWeight: isToday ? 800 : 500, 
+                    color: isToday ? 'var(--color-primary)' : cell.isCurrentMonth ? 'var(--text-primary)' : 'var(--text-muted)' 
+                  }}>
+                    {cell.date.getDate()}
+                  </span>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }} onClick={(e) => e.stopPropagation()}>
+                    {dayApps.slice(0, 3).map(a => (
+                      <div 
+                        key={a.id}
+                        onClick={() => openEditAppModal(a)}
+                        onMouseEnter={() => setHoveredAppId(a.id)}
+                        onMouseLeave={() => setHoveredAppId(null)}
+                        style={{
+                          padding: '0.25rem 0.4rem',
+                          borderRadius: '4px',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          background: a.status === 'completed' ? 'rgba(16, 185, 129, 0.15)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                          color: a.status === 'completed' ? 'var(--color-success)' : a.status === 'cancelled' ? 'var(--color-danger)' : 'var(--color-warning)',
+                          border: `1px solid ${a.status === 'completed' ? 'rgba(16, 185, 129, 0.25)' : a.status === 'cancelled' ? 'rgba(239, 68, 68, 0.25)' : 'rgba(245, 158, 11, 0.25)'}`,
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          position: 'relative'
+                        }}
+                      >
+                        {new Date(a.date_time).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })} - {a.lead_name}
+                        {renderHoverCard(a)}
+                      </div>
+                    ))}
+                    {dayApps.length > 3 && (
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        +{dayApps.length - 3} randevu daha
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     );
@@ -1560,6 +1562,24 @@ export default function Home() {
         </button>
       </div>
 
+      {/* Mobile Sidebar Backdrop */}
+      {isOpenMobile && (
+        <div 
+          onClick={() => setIsOpenMobile(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(0, 0, 0, 0.4)',
+            backdropFilter: 'blur(3px)',
+            zIndex: 190,
+          }}
+          className="animate-fade-in"
+        />
+      )}
+
       {/* Sidebar Component */}
       <Sidebar 
         activeTab={activeTab} 
@@ -1742,12 +1762,7 @@ export default function Home() {
               </div>
 
               {/* CRM swimlanes */}
-              <div className="crm-columns-grid" style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-                gap: '1.5rem',
-                alignItems: 'start'
-              }}>
+              <div className="crm-columns-grid">
                 {/* 1. HOT LEADS COLUMN */}
                 <div className="glass-panel" style={{ background: 'rgba(248, 113, 113, 0.02)', borderColor: 'rgba(248, 113, 113, 0.15)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>

@@ -369,6 +369,10 @@ textarea.form-control {
 
 /* Responsive Overrides */
 @media (max-width: 991px) {
+  .app-container {
+    flex-direction: column;
+  }
+
   .sidebar-wrapper {
     display: none;
   }
