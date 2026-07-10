@@ -117,9 +117,15 @@ Eşleştirici ekranı horizontal sub-tab yapısına sahiptir:
 
 ---
 
-## 4. Geliştirici & Test Yönergeleri
+## 4. Bir Sonraki Oturumda Yapılacaklar & Eksiklikler (Sonraki Adım)
+Bir sonraki geliştirme oturumunda doğrudan ele alınacak bilinen sorunlar ve eksiklikler şunlardır:
+1. **Müşteri Veritabanı Tablo Filtreleri**: Müşteri Veritabanı tablosundaki sütun başlığı filtreleri (Excel huni filtre popover'ları) arayüzde fiziksel olarak yer almaktadır ancak işlevsel olarak süzme işlemini gerçekleştirmemektedir. Sonraki adımda bu filtrelerin çalışır hale getirilmesi planlanmaktadır.
+2. **Raporlama/Info Sekmeleri**: Sol menüdeki "Raporlama/Info" sekmesi altındaki **Raporlar** (`reports-general`) ve **Info** (`reports-info`) alt sekmeleri şu an için çalışmamaktadır (sayfa boş gelmektedir). Bir sonraki oturumda bu sayfaların içerikleri ve işlevleri düzeltilecektir.
+
+---
+
+## 5. Geliştirici & Test Yönergeleri
 * **Geliştirme Sunucusu**: `npm run dev`
 * **TypeScript & Derleme Kontrolü**: `npm run build` (Hataları kontrol etmek için production build alınmalıdır).
 * **Canlı Ortam**: Proje Vercel production üzerinde çalışmaktadır.
   * **Üretim Linki**: [https://fully-delta.vercel.app](https://fully-delta.vercel.app)
-
