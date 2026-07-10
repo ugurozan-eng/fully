@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, UserPlus, Calendar, Sparkles, 
-  BarChart3, QrCode, Upload, Database, Activity, Sun, Moon, ArrowLeftRight
+  BarChart3, QrCode, Upload, Database, Activity, Sun, Moon, ArrowLeftRight,
+  ChevronDown, ChevronRight, Info
 } from 'lucide-react';
 import { StorageManager } from '@/lib/storage';
 
@@ -20,6 +21,15 @@ export default function Sidebar({ activeTab, setActiveTab, isOpenMobile, setIsOp
     active: false,
     checked: false,
   });
+  const [reportsExpanded, setReportsExpanded] = useState<boolean>(
+    activeTab.startsWith('reports-')
+  );
+
+  useEffect(() => {
+    if (activeTab.startsWith('reports-')) {
+      setReportsExpanded(true);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     // Load theme from localStorage
@@ -59,7 +69,7 @@ export default function Sidebar({ activeTab, setActiveTab, isOpenMobile, setIsOp
     { id: 'add-lead', label: 'Yeni Müşteri', icon: UserPlus },
     { id: 'appointments', label: 'Randevular', icon: Calendar },
     { id: 'matchmaker', label: 'Eşleştirici', icon: Sparkles },
-    { id: 'reports', label: 'Raporlama', icon: BarChart3 },
+    { id: 'reports-parent', label: 'Raporlama/Info', icon: BarChart3, isParent: true },
     { id: 'qr-intake', label: 'QR Giriş', icon: QrCode },
     { id: 'import', label: 'Excel/Veri Yükle', icon: Upload },
   ];
@@ -99,6 +109,78 @@ export default function Sidebar({ activeTab, setActiveTab, isOpenMobile, setIsOp
           <ul className="nav-menu-list">
             {navItems.map((item) => {
               const IconComponent = item.icon;
+              
+              if (item.id === 'reports-parent') {
+                const isActive = activeTab.startsWith('reports-');
+                return (
+                  <li key={item.id}>
+                    <button
+                      onClick={() => {
+                        setReportsExpanded(!reportsExpanded);
+                        if (!activeTab.startsWith('reports-')) {
+                          setActiveTab('reports-general');
+                        }
+                      }}
+                      className={`nav-menu-item-btn ${isActive ? 'active' : ''}`}
+                      style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <IconComponent size={18} />
+                        <span>{item.label}</span>
+                      </div>
+                      {reportsExpanded ? <ChevronDown size={14} style={{ opacity: 0.6 }} /> : <ChevronRight size={14} style={{ opacity: 0.6 }} />}
+                    </button>
+                    {reportsExpanded && (
+                      <ul className="nav-submenu-list" style={{ 
+                        paddingLeft: '1.25rem', 
+                        marginTop: '0.25rem', 
+                        display: 'flex', 
+                        flexDirection: 'column', 
+                        gap: '0.2rem', 
+                        listStyle: 'none' 
+                      }}>
+                        <li>
+                          <button
+                            onClick={() => {
+                              setActiveTab('reports-general');
+                              if (setIsOpenMobile) setIsOpenMobile(false);
+                            }}
+                            className={`nav-menu-item-btn submenu-item-btn ${activeTab === 'reports-general' ? 'active' : ''}`}
+                            style={{ 
+                              fontSize: '0.85rem', 
+                              padding: '0.45rem 0.75rem', 
+                              borderRadius: '6px',
+                              background: activeTab === 'reports-general' ? 'var(--bg-hover)' : 'transparent'
+                            }}
+                          >
+                            <Activity size={14} />
+                            <span>Raporlar</span>
+                          </button>
+                        </li>
+                        <li>
+                          <button
+                            onClick={() => {
+                              setActiveTab('reports-info');
+                              if (setIsOpenMobile) setIsOpenMobile(false);
+                            }}
+                            className={`nav-menu-item-btn submenu-item-btn ${activeTab === 'reports-info' ? 'active' : ''}`}
+                            style={{ 
+                              fontSize: '0.85rem', 
+                              padding: '0.45rem 0.75rem', 
+                              borderRadius: '6px',
+                              background: activeTab === 'reports-info' ? 'var(--bg-hover)' : 'transparent'
+                            }}
+                          >
+                            <Info size={14} />
+                            <span>Info</span>
+                          </button>
+                        </li>
+                      </ul>
+                    )}
+                  </li>
+                );
+              }
+
               return (
                 <li key={item.id}>
                   <button

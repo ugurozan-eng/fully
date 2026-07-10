@@ -12,6 +12,7 @@ if (process.env.STORAGE_URL && !process.env.POSTGRES_URL) {
 
 import { sql } from '@vercel/postgres';
 import { Lead, Appointment, Property } from '@/lib/types';
+import { formatPhone } from '@/lib/utils';
 
 // Helper to check if DB is configured
 const isDbConfigured = () => {
@@ -103,12 +104,14 @@ export async function initDatabase() {
         ortak_alan DECIMAL(10, 2),
         kapali_acik_alan DECIMAL(10, 2),
         daire_sahibi VARCHAR(255),
+        is_sold BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `;
 
     // Database migration: Add columns to existing properties table if they do not exist
     try {
+      await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS is_sold BOOLEAN DEFAULT FALSE;`;
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS parsel VARCHAR(50);`;
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS bag_bol_no VARCHAR(50);`;
       await sql`ALTER TABLE properties ADD COLUMN IF NOT EXISTS kat VARCHAR(100);`;
@@ -128,7 +131,23 @@ export async function initDatabase() {
       await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS customer_question VARCHAR(255);`;
       await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS lead_status VARCHAR(100);`;
       await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR(255);`;
+      await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP;`;
+      try {
+        await sql`UPDATE leads SET updated_at = created_at WHERE updated_at IS NULL;`;
+      } catch (updErr) {
+        console.warn('Failed to backfill updated_at:', updErr);
+      }
+      // Format phone numbers starting with 05 to +905
+      try {
+        await sql`UPDATE leads SET phone = '+90' || SUBSTRING(phone FROM 2) WHERE phone LIKE '05%';`;
+        await sql`UPDATE leads SET phone = '+90' || SUBSTRING(phone FROM 2) WHERE phone LIKE '0 5%';`;
+        await sql`UPDATE leads SET phone = '+90' || SUBSTRING(phone FROM 2) WHERE phone LIKE '0(5%';`;
+        await sql`UPDATE leads SET phone = '+90' || SUBSTRING(phone FROM 2) WHERE phone LIKE '0 (5%';`;
+      } catch (phoneErr) {
+        console.warn('Failed to format phone numbers:', phoneErr);
+      }
       await sql`ALTER TABLE appointments ADD COLUMN IF NOT EXISTS appointment_type VARCHAR(100);`;
+      await sql`ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_update_info VARCHAR(255);`;
     } catch (migErr) {
       console.warn('Migration warnings (non-fatal):', migErr);
     }
@@ -145,7 +164,7 @@ export async function initDatabase() {
 export async function getLeads(): Promise<{ success: boolean; data: Lead[]; message?: string }> {
   if (!isDbConfigured()) return { success: false, data: [] };
   try {
-    const { rows } = await sql`SELECT * FROM leads ORDER BY created_at DESC`;
+    const { rows } = await sql`SELECT * FROM leads ORDER BY COALESCE(updated_at, created_at) DESC, created_at DESC`;
     // Map database fields to standard types if needed
     const leads: Lead[] = rows.map((r: any) => ({
       id: r.id,
@@ -168,6 +187,8 @@ export async function getLeads(): Promise<{ success: boolean; data: Lead[]; mess
       is_alert_active: r.is_alert_active,
       notes: r.notes || '',
       created_at: r.created_at,
+      updated_at: r.updated_at || r.created_at,
+      last_update_info: r.last_update_info || '',
     }));
     return { success: true, data: leads };
   } catch (error: any) {
@@ -180,15 +201,49 @@ export async function saveLead(lead: Lead) {
   if (!isDbConfigured()) return { success: false, message: 'Database not configured.' };
   try {
     const finalWarmth = lead.lead_status === 'Beklemede' ? 'hot' : lead.warmth;
+    const updatedAt = lead.updated_at || new Date().toISOString();
+    const formattedPhone = formatPhone(lead.phone);
+    
+    // Fetch old lead if exists to calculate change description
+    let lastUpdateInfo = lead.last_update_info || '';
+    const oldRes = await sql`SELECT * FROM leads WHERE id = ${lead.id}`;
+    if (oldRes.rows.length > 0) {
+      const old = oldRes.rows[0];
+      const changes: string[] = [];
+      if (old.name !== lead.name) changes.push('İsim güncellendi');
+      if (old.phone !== formattedPhone) changes.push('Telefon güncellendi');
+      if (old.email !== lead.email) changes.push('E-posta güncellendi');
+      if (old.source !== lead.source) changes.push('Kaynak güncellendi');
+      if (old.property_type !== lead.property_type) changes.push('Emlak tipi güncellendi');
+      if (old.room_count !== lead.room_count) changes.push('Oda ihtiyacı güncellendi');
+      if (old.purpose !== lead.purpose) changes.push('Alım amacı güncellendi');
+      if (old.customer_question !== lead.customer_question) changes.push('Soru güncellendi');
+      if (old.lead_status !== lead.lead_status) {
+        changes.push(`Durum güncellendi (${old.lead_status || 'Boş'} -> ${lead.lead_status || 'Boş'})`);
+      }
+      if (old.rejection_reason !== lead.rejection_reason) changes.push('Red nedeni güncellendi');
+      if (Number(old.budget) !== Number(lead.budget)) changes.push('Bütçe güncellendi');
+      if (old.warmth !== finalWarmth) {
+        changes.push(`Sıcaklık güncellendi (${old.warmth} -> ${finalWarmth})`);
+      }
+      if (old.notes !== lead.notes) changes.push('Notlar güncellendi');
+      
+      if (changes.length > 0) {
+        lastUpdateInfo = changes.join(', ');
+      } else {
+        lastUpdateInfo = old.last_update_info || '';
+      }
+    }
+
     await sql`
       INSERT INTO leads (
         id, name, phone, email, source, property_type, room_count, purpose, customer_question, lead_status,
         target_region, current_location, marital_status, occupation, rejection_reason, budget, 
-        warmth, is_alert_active, notes, created_at
+        warmth, is_alert_active, notes, created_at, updated_at, last_update_info
       ) VALUES (
-        ${lead.id}, ${lead.name}, ${lead.phone}, ${lead.email}, ${lead.source}, ${lead.property_type}, ${lead.room_count}, ${lead.purpose}, ${lead.customer_question || ''}, ${lead.lead_status || ''},
+        ${lead.id}, ${lead.name}, ${formattedPhone}, ${lead.email}, ${lead.source}, ${lead.property_type}, ${lead.room_count}, ${lead.purpose}, ${lead.customer_question || ''}, ${lead.lead_status || ''},
         ${lead.target_region}, ${lead.current_location}, ${lead.marital_status || ''}, ${lead.occupation || ''}, ${lead.rejection_reason || ''}, ${lead.budget},
-        ${finalWarmth}, ${lead.is_alert_active}, ${lead.notes}, ${lead.created_at}
+        ${finalWarmth}, ${lead.is_alert_active}, ${lead.notes}, ${lead.created_at}, ${updatedAt}, ${lastUpdateInfo}
       )
       ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
@@ -209,7 +264,9 @@ export async function saveLead(lead: Lead) {
         warmth = EXCLUDED.warmth,
         is_alert_active = EXCLUDED.is_alert_active,
         notes = EXCLUDED.notes,
-        created_at = EXCLUDED.created_at;
+        created_at = EXCLUDED.created_at,
+        updated_at = EXCLUDED.updated_at,
+        last_update_info = EXCLUDED.last_update_info;
     `;
     return { success: true };
   } catch (error: any) {
@@ -319,6 +376,7 @@ export async function getProperties(): Promise<{ success: boolean; data: Propert
       kapali_acik_alan: r.kapali_acik_alan ? Number(r.kapali_acik_alan) : undefined,
       daire_sahibi: r.daire_sahibi || '',
       created_at: r.created_at,
+      is_sold: !!r.is_sold,
     }));
     return { success: true, data: properties };
   } catch (error: any) {
@@ -336,14 +394,15 @@ export async function saveProperty(prop: Property) {
         parsel, bag_bol_no, kat, kull_amaci,
         kapali_alan, acik_alan, net_alan, brut_alan,
         portfoy_adi, extra_ozellik, portfoy_kimde,
-        merdiven_alan, ortak_alan, kapali_acik_alan, daire_sahibi
+        merdiven_alan, ortak_alan, kapali_acik_alan, daire_sahibi, is_sold
       )
       VALUES (
         ${prop.id}, ${prop.title}, ${prop.price}, ${prop.region}, ${prop.type}, ${prop.room_count},
         ${prop.parsel || null}, ${prop.bag_bol_no || null}, ${prop.kat || null}, ${prop.kull_amaci || null},
         ${prop.kapali_alan || null}, ${prop.acik_alan || null}, ${prop.net_alan || null}, ${prop.brut_alan || null},
         ${prop.portfoy_adi || null}, ${prop.extra_ozellik || null}, ${prop.portfoy_kimde || null},
-        ${prop.merdiven_alan || null}, ${prop.ortak_alan || null}, ${prop.kapali_acik_alan || null}, ${prop.daire_sahibi || null}
+        ${prop.merdiven_alan || null}, ${prop.ortak_alan || null}, ${prop.kapali_acik_alan || null}, ${prop.daire_sahibi || null},
+        ${prop.is_sold || false}
       )
       ON CONFLICT (id) DO UPDATE SET
         title = EXCLUDED.title,
@@ -365,7 +424,8 @@ export async function saveProperty(prop: Property) {
         merdiven_alan = EXCLUDED.merdiven_alan,
         ortak_alan = EXCLUDED.ortak_alan,
         kapali_acik_alan = EXCLUDED.kapali_acik_alan,
-        daire_sahibi = EXCLUDED.daire_sahibi;
+        daire_sahibi = EXCLUDED.daire_sahibi,
+        is_sold = EXCLUDED.is_sold;
     `;
     return { success: true };
   } catch (error: any) {
@@ -479,7 +539,7 @@ export async function seedLeadsFromExcel() {
 
     for (const row of rawRows) {
       const name = String(row['İsim Soyisim'] || '').trim();
-      const phone = String(row['Tel'] || '').trim();
+      const phone = formatPhone(String(row['Tel'] || '').trim());
 
       if (!name && !phone) continue;
 
@@ -561,19 +621,19 @@ export async function seedLeadsFromExcel() {
       let paramIdx = 1;
 
       for (const lead of leadsToInsert) {
-        valueRows.push(`($${paramIdx}, $${paramIdx+1}, $${paramIdx+2}, $${paramIdx+3}, $${paramIdx+4}, $${paramIdx+5}, $${paramIdx+6}, $${paramIdx+7}, $${paramIdx+8}, $${paramIdx+9}, $${paramIdx+10}, $${paramIdx+11}, $${paramIdx+12}, $${paramIdx+13})`);
+        valueRows.push(`($${paramIdx}, $${paramIdx+1}, $${paramIdx+2}, $${paramIdx+3}, $${paramIdx+4}, $${paramIdx+5}, $${paramIdx+6}, $${paramIdx+7}, $${paramIdx+8}, $${paramIdx+9}, $${paramIdx+10}, $${paramIdx+11}, $${paramIdx+12}, $${paramIdx+13}, $${paramIdx+14})`);
         values.push(
           lead.id, lead.name, lead.phone, lead.source, lead.room_count, lead.customer_question,
           lead.lead_status, lead.current_location, lead.rejection_reason, lead.budget, lead.warmth,
-          lead.is_alert_active, lead.notes, lead.created_at
+          lead.is_alert_active, lead.notes, lead.created_at, lead.created_at
         );
-        paramIdx += 14;
+        paramIdx += 15;
       }
 
       const queryText = `
         INSERT INTO leads (
           id, name, phone, source, room_count, customer_question, lead_status,
-          current_location, rejection_reason, budget, warmth, is_alert_active, notes, created_at
+          current_location, rejection_reason, budget, warmth, is_alert_active, notes, created_at, updated_at
         ) VALUES ${valueRows.join(', ')}
       `;
 

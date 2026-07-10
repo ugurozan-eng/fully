@@ -19,6 +19,8 @@ export interface Lead {
   is_alert_active: boolean; // Fiyat düşerse aranacaklar listesinde olsun mu?
   notes: string;
   created_at: string;
+  updated_at?: string;
+  last_update_info?: string;
 }
 
 export interface Appointment {
@@ -55,4 +57,5 @@ export interface Property {
   daire_sahibi?: string;
   portfoy_kimde?: string;
   created_at?: string;
+  is_sold?: boolean;
 }

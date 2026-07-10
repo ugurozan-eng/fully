@@ -1,5 +1,6 @@
 import { Lead, Appointment, Property } from './types';
 import * as actions from '@/app/actions';
+import { formatPhone } from './utils';
 
 // Check if window object is available (client-side)
 const isClient = () => typeof window !== 'undefined';
@@ -71,18 +72,57 @@ export const StorageManager = {
   async saveLead(lead: Lead): Promise<boolean> {
     const dbActive = await this.isDbActive();
     
-    // Save to local storage first (always keep copy)
+    // Calculate last_update_info for local fallback
     const localLeads = getLocal<Lead[]>('fully-leads', []);
+    const oldLead = localLeads.find((l) => l.id === lead.id);
+    let lastUpdateInfo = lead.last_update_info || '';
+    
+    if (oldLead) {
+      const changes: string[] = [];
+      if (oldLead.name !== lead.name) changes.push('İsim güncellendi');
+      if (oldLead.phone !== formatPhone(lead.phone)) changes.push('Telefon güncellendi');
+      if (oldLead.email !== lead.email) changes.push('E-posta güncellendi');
+      if (oldLead.source !== lead.source) changes.push('Kaynak güncellendi');
+      if (oldLead.property_type !== lead.property_type) changes.push('Emlak tipi güncellendi');
+      if (oldLead.room_count !== lead.room_count) changes.push('Oda ihtiyacı güncellendi');
+      if (oldLead.purpose !== lead.purpose) changes.push('Alım amacı güncellendi');
+      if (oldLead.customer_question !== lead.customer_question) changes.push('Soru güncellendi');
+      if (oldLead.lead_status !== lead.lead_status) {
+        changes.push(`Durum güncellendi (${oldLead.lead_status || 'Boş'} -> ${lead.lead_status || 'Boş'})`);
+      }
+      if (oldLead.rejection_reason !== lead.rejection_reason) changes.push('Red nedeni güncellendi');
+      if (Number(oldLead.budget) !== Number(lead.budget)) changes.push('Bütçe güncellendi');
+      if (oldLead.warmth !== lead.warmth) {
+        changes.push(`Sıcaklık güncellendi (${oldLead.warmth} -> ${lead.warmth})`);
+      }
+      if (oldLead.notes !== lead.notes) changes.push('Notlar güncellendi');
+      
+      if (changes.length > 0) {
+        lastUpdateInfo = changes.join(', ');
+      } else {
+        lastUpdateInfo = oldLead.last_update_info || '';
+      }
+    }
+
+    // Set updated_at timestamp and format phone number
+    const leadWithUpdate: Lead = {
+      ...lead,
+      phone: formatPhone(lead.phone),
+      updated_at: new Date().toISOString(),
+      last_update_info: lastUpdateInfo
+    };
+    
+    // Save to local storage first (always keep copy)
     const index = localLeads.findIndex((l) => l.id === lead.id);
     if (index >= 0) {
-      localLeads[index] = lead;
+      localLeads[index] = leadWithUpdate;
     } else {
-      localLeads.unshift(lead);
+      localLeads.unshift(leadWithUpdate);
     }
     setLocal('fully-leads', localLeads);
 
     if (dbActive) {
-      const res = await actions.saveLead(lead);
+      const res = await actions.saveLead(leadWithUpdate);
       return res.success;
     }
     return true;

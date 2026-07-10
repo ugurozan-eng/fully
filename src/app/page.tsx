@@ -9,7 +9,7 @@ import {
   Plus, Phone, Calendar, Trash2, Edit, Check, X, 
   AlertTriangle, AlertCircle, Share2, QrCode, Search, 
   RefreshCw, Briefcase, MapPin, Heart, DollarSign, MessageCircle,
-  CheckCircle2, Menu, Info, ChevronUp, ChevronDown, BarChart3, Users, Sparkles
+  CheckCircle2, Menu, Info, ChevronUp, ChevronDown, BarChart3, Users, Sparkles, Filter, Database
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import * as XLSX from 'xlsx';
@@ -154,8 +154,18 @@ export default function Home() {
   
   // New Matchmaker & Import States
   const [importType, setImportType] = useState<'leads' | 'properties'>('leads');
-  const [matchmakerSubTab, setMatchmakerSubTab] = useState<'matching' | 'portfolio'>('matching');
+  const [matchmakerSubTab, setMatchmakerSubTab] = useState<'matching' | 'portfolio' | 'database'>('matching');
   const [selectedLeadId, setSelectedLeadId] = useState<string>('');
+  const [leadDbSearchQuery, setLeadDbSearchQuery] = useState<string>('');
+
+  // Excel-like Column Filters & Sorting
+  const [reportFilters, setReportFilters] = useState<Record<string, string[]>>({});
+  const [reportSort, setReportSort] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [reportSearchTerms, setReportSearchTerms] = useState<Record<string, string>>({});
+  const [dbFilters, setDbFilters] = useState<Record<string, string[]>>({});
+  const [dbSort, setDbSort] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [dbSearchTerms, setDbSearchTerms] = useState<Record<string, string>>({});
+  const [openPopoverId, setOpenPopoverId] = useState<string | null>(null);
   const [showAddPropForm, setShowAddPropForm] = useState<boolean>(false);
   const [propertySearchQuery, setPropertySearchQuery] = useState<string>('');
   const [showAllColumns, setShowAllColumns] = useState<boolean>(false);
@@ -604,7 +614,7 @@ export default function Home() {
     email: '',
     source: 'Instagram',
     property_type: 'Daire',
-    room_count: '2+1',
+    room_count: '',
     purpose: 'Oturumluk',
     customer_question: '',
     lead_status: '',
@@ -631,7 +641,7 @@ export default function Home() {
   const [newProperty, setNewProperty] = useState<Partial<Property>>({
     parsel: '',
     bag_bol_no: '',
-    room_count: '2+1',
+    room_count: '',
     kat: '',
     kull_amaci: 'Mesken',
     kapali_alan: 0,
@@ -728,7 +738,7 @@ export default function Home() {
       email: newLead.email || '',
       source: newLead.source || 'Instagram',
       property_type: newLead.property_type || 'Daire',
-      room_count: newLead.room_count !== undefined ? newLead.room_count : '2+1',
+      room_count: newLead.room_count || '',
       purpose: newLead.purpose || 'Oturumluk',
       customer_question: newLead.customer_question || '',
       lead_status: newLead.lead_status || '',
@@ -755,7 +765,7 @@ export default function Home() {
       email: '',
       source: 'Instagram',
       property_type: 'Daire',
-      room_count: '2+1',
+      room_count: '',
       purpose: 'Oturumluk',
       customer_question: '',
       lead_status: '',
@@ -833,6 +843,7 @@ export default function Home() {
 
     const activeProps = (properties || []).filter(p => {
       if (!p) return false;
+      if (p.is_sold) return false;
       const isClosed = String(p.portfoy_kimde || '').trim().toLowerCase() === 'kapalı';
       if (isClosed) return false;
       const price = Number(p.price) || 0;
@@ -1478,6 +1489,349 @@ export default function Home() {
     });
   };
 
+  const [reportLeads, setReportLeads] = useState<Lead[] | null>(null);
+
+  // Inline update for leads
+  const handleInlineLeadUpdate = async (lead: Lead, field: keyof Lead, value: any) => {
+    let finalValue = value;
+    if (field === 'budget') {
+      finalValue = Number(value) || 0;
+    }
+    const updated = {
+      ...lead,
+      [field]: finalValue
+    };
+    await StorageManager.saveLead(updated);
+    await loadAllData();
+    // Also update reportLeads if it's currently generated
+    if (reportLeads) {
+      setReportLeads(prev => {
+        if (!prev) return null;
+        return prev.map(l => l.id === lead.id ? { ...l, ...updated } : l);
+      });
+    }
+  };
+
+  // Excel-like Column Filters Popover Renderer
+  const renderFilterPopover = (
+    tableType: 'report' | 'db',
+    columnKey: string,
+    columnTitle: string,
+    allItems: Lead[],
+    getValueFn: (item: Lead) => string
+  ) => {
+    const popoverId = `${tableType}-${columnKey}`;
+    if (openPopoverId !== popoverId) return null;
+
+    const activeFilters = tableType === 'report' ? reportFilters : dbFilters;
+    const setActiveFilters = tableType === 'report' ? setReportFilters : setDbFilters;
+    const sortConfig = tableType === 'report' ? reportSort : dbSort;
+    const setSortConfig = tableType === 'report' ? setReportSort : setDbSort;
+    const searchTerms = tableType === 'report' ? reportSearchTerms : dbSearchTerms;
+    const setSearchTerms = tableType === 'report' ? setReportSearchTerms : setDbSearchTerms;
+
+    const selectedValues = activeFilters[columnKey] || [];
+    const searchTerm = (searchTerms[columnKey] || '').toLowerCase();
+
+    // Gather unique values from the column
+    const uniqueValues = Array.from(
+      new Set(allItems.map(getValueFn).map(v => (v || '').trim() || '-'))
+    ).sort((a, b) => a.localeCompare(b, 'tr'));
+
+    // Filter unique values by search input inside the popover
+    const filteredUniqueValues = uniqueValues.filter(val => 
+      val.toLowerCase().includes(searchTerm)
+    );
+
+    const handleCheckboxChange = (value: string, checked: boolean) => {
+      setActiveFilters(prev => {
+        const current = prev[columnKey] || [];
+        const next = checked 
+          ? [...current, value] 
+          : current.filter(v => v !== value);
+        return {
+          ...prev,
+          [columnKey]: next.length > 0 ? next : []
+        };
+      });
+    };
+
+    const handleSelectAll = (checked: boolean) => {
+      setActiveFilters(prev => {
+        const next = { ...prev };
+        if (checked) {
+          next[columnKey] = [...uniqueValues];
+        } else {
+          delete next[columnKey];
+        }
+        return next;
+      });
+    };
+
+    const handleSort = (direction: 'asc' | 'desc') => {
+      setSortConfig({ key: columnKey, direction });
+      setOpenPopoverId(null);
+    };
+
+    const handleClear = () => {
+      setActiveFilters(prev => {
+        const next = { ...prev };
+        delete next[columnKey];
+        return next;
+      });
+      setOpenPopoverId(null);
+    };
+
+    return (
+      <div 
+        className="glass-panel"
+        style={{ 
+          position: 'absolute', 
+          top: '100%', 
+          left: 0, 
+          zIndex: 999, 
+          background: 'var(--bg-secondary)', 
+          border: '1px solid var(--glass-border)', 
+          borderRadius: '8px', 
+          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.7), var(--shadow-glow)', 
+          width: '220px',
+          padding: '0.75rem',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.5rem',
+          marginTop: '0.25rem',
+          color: '#fff',
+          fontWeight: 'normal',
+          textAlign: 'left'
+        }}
+      >
+        <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{columnTitle} Filtrele</span>
+          {selectedValues.length > 0 && (
+            <button onClick={handleClear} style={{ background: 'none', border: 'none', color: 'var(--color-danger)', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}>
+              Temizle
+            </button>
+          )}
+        </div>
+
+        {/* Sort Actions */}
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button 
+            type="button"
+            onClick={() => handleSort('asc')}
+            style={{ 
+              flex: 1, 
+              padding: '0.35rem', 
+              fontSize: '0.75rem', 
+              background: sortConfig?.key === columnKey && sortConfig.direction === 'asc' ? 'var(--primary-gradient)' : 'rgba(255,255,255,0.05)', 
+              border: '1px solid var(--glass-border)',
+              borderRadius: '4px',
+              color: '#fff',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.25rem',
+              fontWeight: 600
+            }}
+          >
+            A-Z Sırala
+          </button>
+          <button 
+            type="button"
+            onClick={() => handleSort('desc')}
+            style={{ 
+              flex: 1, 
+              padding: '0.35rem', 
+              fontSize: '0.75rem', 
+              background: sortConfig?.key === columnKey && sortConfig.direction === 'desc' ? 'var(--primary-gradient)' : 'rgba(255,255,255,0.05)', 
+              border: '1px solid var(--glass-border)',
+              borderRadius: '4px',
+              color: '#fff',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '0.25rem',
+              fontWeight: 600
+            }}
+          >
+            Z-A Sırala
+          </button>
+        </div>
+
+        {/* Search Input */}
+        <input
+          type="text"
+          placeholder="Ara..."
+          value={searchTerms[columnKey] || ''}
+          onChange={(e) => setSearchTerms(prev => ({ ...prev, [columnKey]: e.target.value }))}
+          style={{
+            width: '100%',
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid var(--glass-border)',
+            borderRadius: '4px',
+            padding: '0.25rem 0.5rem',
+            color: '#fff',
+            fontSize: '0.75rem',
+            outline: 'none'
+          }}
+        />
+
+        {/* Values Checkbox List */}
+        <div style={{ maxHeight: '150px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.35rem', padding: '0.25rem 0' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', cursor: 'pointer' }}>
+            <input 
+              type="checkbox" 
+              checked={selectedValues.length > 0 && selectedValues.length === uniqueValues.length}
+              onChange={(e) => handleSelectAll(e.target.checked)}
+            />
+            <span>(Tümünü Seç)</span>
+          </label>
+          {filteredUniqueValues.map(val => (
+            <label key={val} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', cursor: 'pointer' }}>
+              <input 
+                type="checkbox" 
+                checked={selectedValues.includes(val)}
+                onChange={(e) => handleCheckboxChange(val, e.target.checked)}
+              />
+              <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={val}>{val}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // Get processed leads for reports table (filtered and sorted)
+  const getProcessedReportLeads = () => {
+    if (!reportLeads) return [];
+    let result = [...reportLeads];
+
+    // Apply column filters
+    Object.entries(reportFilters).forEach(([key, selectedVals]) => {
+      if (selectedVals.length === 0) return;
+      result = result.filter(lead => {
+        let val = '';
+        if (key === 'name') val = lead.name;
+        else if (key === 'phone') val = lead.phone;
+        else if (key === 'current_location') val = lead.current_location || '-';
+        else if (key === 'created_at') val = lead.created_at ? new Date(lead.created_at).toLocaleDateString('tr-TR') : '-';
+        else if (key === 'warmth') val = lead.warmth === 'hot' ? '🔥 Hot' : (lead.warmth === 'warm' ? '⚡ Warm' : '❄️ Cold');
+        else if (key === 'source') val = lead.source || '-';
+        else if (key === 'room_count') val = lead.room_count || '-';
+        else if (key === 'lead_status') val = lead.lead_status || '-';
+        else if (key === 'customer_question') val = lead.customer_question || '-';
+        else if (key === 'notes') val = lead.notes || '-';
+        else if (key === 'budget') val = lead.budget ? formatNumberWithDots(lead.budget) : '-';
+        else if (key === 'updated_at') val = lead.last_update_info && lead.updated_at ? new Date(lead.updated_at).toLocaleDateString('tr-TR') : '-';
+        else if (key === 'last_update_info') val = lead.last_update_info || '-';
+
+        return selectedVals.includes((val || '').trim() || '-');
+      });
+    });
+
+    // Apply sorting
+    if (reportSort) {
+      const { key, direction } = reportSort;
+      result.sort((a, b) => {
+        let valA: any = '';
+        let valB: any = '';
+
+        if (key === 'name') { valA = a.name; valB = b.name; }
+        else if (key === 'phone') { valA = a.phone; valB = b.phone; }
+        else if (key === 'current_location') { valA = a.current_location || ''; valB = b.current_location || ''; }
+        else if (key === 'created_at') { valA = a.created_at || ''; valB = b.created_at || ''; }
+        else if (key === 'warmth') { valA = a.warmth; valB = b.warmth; }
+        else if (key === 'source') { valA = a.source || ''; valB = b.source || ''; }
+        else if (key === 'room_count') { valA = a.room_count || ''; valB = b.room_count || ''; }
+        else if (key === 'lead_status') { valA = a.lead_status || ''; valB = b.lead_status || ''; }
+        else if (key === 'customer_question') { valA = a.customer_question || ''; valB = b.customer_question || ''; }
+        else if (key === 'notes') { valA = a.notes || ''; valB = b.notes || ''; }
+        else if (key === 'budget') { valA = a.budget; valB = b.budget; }
+        else if (key === 'updated_at') { valA = a.updated_at || ''; valB = b.updated_at || ''; }
+        else if (key === 'last_update_info') { valA = a.last_update_info || ''; valB = b.last_update_info || ''; }
+
+        if (typeof valA === 'string') {
+          return direction === 'asc' ? valA.localeCompare(valB, 'tr') : valB.localeCompare(valA, 'tr');
+        } else {
+          return direction === 'asc' ? valA - valB : valB - valA;
+        }
+      });
+    }
+
+    return result;
+  };
+
+  // Get processed leads for DB table (filtered and sorted)
+  const getProcessedDbLeads = () => {
+    // Start with basic search filter
+    let result = (leads || []).filter(lead => {
+      if (!lead) return false;
+      const name = String(lead.name || '').toLowerCase();
+      const cleanPhone = String(lead.phone || '').replace(/\D/g, '');
+      const cleanQuery = leadDbSearchQuery.replace(/\D/g, '');
+      const phoneMatch = cleanQuery !== '' && cleanPhone.includes(cleanQuery);
+      const loc = String(lead.current_location || '').toLowerCase();
+      const query = leadDbSearchQuery.toLowerCase();
+      return name.includes(query) || phoneMatch || loc.includes(query);
+    });
+
+    // Apply column filters
+    Object.entries(dbFilters).forEach(([key, selectedVals]) => {
+      if (selectedVals.length === 0) return;
+      result = result.filter(lead => {
+        let val = '';
+        if (key === 'name') val = lead.name;
+        else if (key === 'phone') val = lead.phone;
+        else if (key === 'current_location') val = lead.current_location || '-';
+        else if (key === 'created_at') val = lead.created_at ? new Date(lead.created_at).toLocaleDateString('tr-TR') : '-';
+        else if (key === 'warmth') val = lead.warmth === 'hot' ? '🔥 Hot' : (lead.warmth === 'warm' ? '⚡ Warm' : '❄️ Cold');
+        else if (key === 'source') val = lead.source || '-';
+        else if (key === 'room_count') val = lead.room_count || '-';
+        else if (key === 'lead_status') val = lead.lead_status || '-';
+        else if (key === 'customer_question') val = lead.customer_question || '-';
+        else if (key === 'notes') val = lead.notes || '-';
+        else if (key === 'budget') val = lead.budget ? formatNumberWithDots(lead.budget) : '-';
+        else if (key === 'updated_at') val = lead.last_update_info && lead.updated_at ? new Date(lead.updated_at).toLocaleDateString('tr-TR') : '-';
+        else if (key === 'last_update_info') val = lead.last_update_info || '-';
+
+        return selectedVals.includes((val || '').trim() || '-');
+      });
+    });
+
+    // Apply sorting
+    if (dbSort) {
+      const { key, direction } = dbSort;
+      result.sort((a, b) => {
+        let valA: any = '';
+        let valB: any = '';
+
+        if (key === 'name') { valA = a.name; valB = b.name; }
+        else if (key === 'phone') { valA = a.phone; valB = b.phone; }
+        else if (key === 'current_location') { valA = a.current_location || ''; valB = b.current_location || ''; }
+        else if (key === 'created_at') { valA = a.created_at || ''; valB = b.created_at || ''; }
+        else if (key === 'warmth') { valA = a.warmth; valB = b.warmth; }
+        else if (key === 'source') { valA = a.source || ''; valB = b.source || ''; }
+        else if (key === 'room_count') { valA = a.room_count || ''; valB = b.room_count || ''; }
+        else if (key === 'lead_status') { valA = a.lead_status || ''; valB = b.lead_status || ''; }
+        else if (key === 'customer_question') { valA = a.customer_question || ''; valB = b.customer_question || ''; }
+        else if (key === 'notes') { valA = a.notes || ''; valB = b.notes || ''; }
+        else if (key === 'budget') { valA = a.budget; valB = b.budget; }
+        else if (key === 'updated_at') { valA = a.updated_at || ''; valB = b.updated_at || ''; }
+        else if (key === 'last_update_info') { valA = a.last_update_info || ''; valB = b.last_update_info || ''; }
+
+        if (typeof valA === 'string') {
+          return direction === 'asc' ? valA.localeCompare(valB, 'tr') : valB.localeCompare(valA, 'tr');
+        } else {
+          return direction === 'asc' ? valA - valB : valB - valA;
+        }
+      });
+    }
+
+    return result;
+  };
+
   // Inline update for properties
   const handleInlinePropertyUpdate = async (prop: Property, field: keyof Property, value: any) => {
     const updated = {
@@ -1865,7 +2219,7 @@ export default function Home() {
                       setEditingLead(null);
                       setNewLead({
                         name: '', phone: '', email: '', source: 'Instagram', property_type: 'Daire',
-                        room_count: '2+1', purpose: 'Oturumluk', customer_question: '', lead_status: '', rejection_reason: '', target_region: '', current_location: '',
+                        room_count: '', purpose: 'Oturumluk', customer_question: '', lead_status: '', rejection_reason: '', target_region: '', current_location: '',
                         marital_status: '', occupation: '', budget: 0, warmth: '' as any, is_alert_active: true, notes: '',
                         created_at: getTodayDateString(),
                       });
@@ -2336,6 +2690,25 @@ export default function Home() {
                 >
                   <Briefcase size={16} /> Portföy & Daire Yönetimi
                 </button>
+                <button
+                  onClick={() => setMatchmakerSubTab('database')}
+                  className="glow-btn animate-fade-in"
+                  style={{
+                    background: matchmakerSubTab === 'database' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid var(--glass-border)',
+                    boxShadow: matchmakerSubTab === 'database' ? 'var(--shadow-glow)' : 'none',
+                    padding: '0.5rem 1.25rem',
+                    borderRadius: '8px',
+                    fontWeight: 600,
+                    color: matchmakerSubTab === 'database' ? '#fff' : 'var(--text-secondary)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem'
+                  }}
+                >
+                  <Database size={16} /> Müşteri Veritabanı
+                </button>
               </div>
 
               {/* Sub-tab 1: Müşteri Eşleştirici */}
@@ -2376,6 +2749,7 @@ export default function Home() {
                     // Filter properties that are active, have a valid price, and match notes keywords
                     const activeProps = (properties || []).filter(p => {
                       if (!p) return false;
+                      if (p.is_sold) return false;
                       
                       // 1. Exclude Kapalı properties
                       const isClosed = String(p.portfoy_kimde || '').trim().toLowerCase() === 'kapalı';
@@ -2788,7 +3162,10 @@ export default function Home() {
                   {/* Properties Table List */}
                   <div className="glass-panel animate-fade-in" style={{ overflowX: 'auto', padding: '1rem' }}>
                     {(() => {
-                      const filteredProps = (properties || []).filter(p => {
+                      const activeProps = (properties || []).filter(p => !p.is_sold);
+                      const soldProps = (properties || []).filter(p => !!p.is_sold);
+
+                      const filterFn = (p: Property) => {
                         if (!p) return false;
                         const parsel = String(p.parsel || '').toLowerCase();
                         const bag = String(p.bag_bol_no || '').toLowerCase();
@@ -2797,205 +3174,706 @@ export default function Home() {
                         const kimde = String(p.portfoy_kimde || '').toLowerCase();
                         const query = propertySearchQuery.toLowerCase();
                         return parsel.includes(query) || bag.includes(query) || room.includes(query) || extra.includes(query) || kimde.includes(query);
-                      });
+                      };
 
-                      if (filteredProps.length === 0) {
+                      const filteredActiveProps = activeProps.filter(filterFn);
+                      const filteredSoldProps = soldProps.filter(filterFn);
+
+                      const renderTable = (list: Property[], isSoldTable: boolean) => {
+                        if (list.length === 0) {
+                          return (
+                            <div style={{ textAlign: 'center', padding: '2rem 0', color: 'var(--text-secondary)' }}>
+                              {isSoldTable ? 'Kriterlere uyan satılmış daire bulunamadı.' : 'Kayıtlı aktif daire bulunamadı.'}
+                            </div>
+                          );
+                        }
+
                         return (
-                          <div style={{ textAlign: 'center', padding: '3rem 0', color: 'var(--text-secondary)' }}>
-                            Kayıtlı ve kriterlerinize uyan daire bulunamadı.
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <div style={{ overflowX: 'auto', width: '100%' }}>
-                          <table style={{ width: '100%', minWidth: showAllColumns ? '1800px' : '100%', borderCollapse: 'collapse', fontSize: '0.85rem', textAlign: 'left' }}>
-                            <thead>
-                              <tr style={{ borderBottom: '2px solid var(--glass-border)', color: 'var(--color-primary)' }}>
-                                {!showAllColumns && <th style={{ padding: '0.75rem 0.5rem', width: '40px' }}></th>}
-                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Parsel</th>
-                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Daire No</th>
-                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kat</th>
-                                {showAllColumns && <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kull. Amacı</th>}
-                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Daire Tipi</th>
-                                {showAllColumns && (
-                                  <>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kapalı Alan</th>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Açık Alan</th>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Merdiven Alan</th>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ortak Alan Payı</th>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Net Alan</th>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kapalı+Açık Alan</th>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Daire Sahibi</th>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Brüt Alan</th>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Portföy Adı</th>
-                                    <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ekstra Özellik</th>
-                                  </>
-                                )}
-                                {!showAllColumns && <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Alan (Net / Brüt)</th>}
-                                {!showAllColumns && <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ekstra Özellik</th>}
-                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700, width: '130px' }}>Fiyat</th>
-                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700, width: '120px' }}>Durum</th>
-                                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700, textAlign: 'center' }}>İşlem</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {filteredProps.map((p, idx) => {
-                                const isExpanded = !!expandedPropRows[p.id];
-                                return (
-                                  <React.Fragment key={p.id}>
-                                    <tr
-                                      style={{
-                                        borderBottom: isExpanded ? 'none' : '1px solid var(--glass-border)',
-                                        background: idx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.01)',
-                                        transition: 'background 0.2s'
-                                      }}
-                                    >
-                                      {!showAllColumns && (
-                                        <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
-                                          <button
-                                            type="button"
-                                            onClick={() => setExpandedPropRows({
-                                              ...expandedPropRows,
-                                              [p.id]: !isExpanded
-                                            })}
-                                            style={{
-                                              background: 'none',
-                                              border: 'none',
-                                              color: 'var(--color-primary)',
-                                              cursor: 'pointer',
-                                              display: 'inline-flex',
-                                              alignItems: 'center',
-                                              justifyContent: 'center',
-                                              padding: '0.2rem',
-                                              transition: 'transform 0.2s'
-                                            }}
-                                          >
-                                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                                          </button>
+                          <div style={{ overflowX: 'auto', width: '100%' }}>
+                            <table style={{ width: '100%', minWidth: showAllColumns ? '1800px' : '100%', borderCollapse: 'collapse', fontSize: '0.85rem', textAlign: 'left' }}>
+                              <thead>
+                                <tr style={{ borderBottom: '2px solid var(--glass-border)', color: isSoldTable ? 'var(--text-muted)' : 'var(--color-primary)' }}>
+                                  {!showAllColumns && <th style={{ padding: '0.75rem 0.5rem', width: '40px' }}></th>}
+                                  <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Parsel</th>
+                                  <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Daire No</th>
+                                  <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kat</th>
+                                  {showAllColumns && <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kull. Amacı</th>}
+                                  <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Daire Tipi</th>
+                                  {showAllColumns && (
+                                    <>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kapalı Alan</th>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Açık Alan</th>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Merdiven Alan</th>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ortak Alan Payı</th>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Net Alan</th>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Kapalı+Açık Alan</th>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Daire Sahibi</th>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Brüt Alan</th>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Portföy Adı</th>
+                                      <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ekstra Özellik</th>
+                                    </>
+                                  )}
+                                  {!showAllColumns && <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Alan (Net / Brüt)</th>}
+                                  {!showAllColumns && <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ekstra Özellik</th>}
+                                  <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700, width: '130px' }}>Fiyat</th>
+                                  <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700, width: '120px' }}>Durum</th>
+                                  <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700, textAlign: 'center', width: '80px' }}>Satıldı</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {list.map((p, idx) => {
+                                  const isExpanded = !!expandedPropRows[p.id];
+                                  return (
+                                    <React.Fragment key={p.id}>
+                                      <tr
+                                        style={{
+                                          borderBottom: isExpanded ? 'none' : '1px solid var(--glass-border)',
+                                          background: idx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.01)',
+                                          transition: 'background 0.2s',
+                                          opacity: isSoldTable ? 0.65 : 1
+                                        }}
+                                      >
+                                        {!showAllColumns && (
+                                          <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
+                                            <button
+                                              type="button"
+                                              onClick={() => setExpandedPropRows({
+                                                ...expandedPropRows,
+                                                [p.id]: !isExpanded
+                                              })}
+                                              style={{
+                                                background: 'none',
+                                                border: 'none',
+                                                color: 'var(--color-primary)',
+                                                cursor: 'pointer',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                padding: '0.2rem',
+                                                transition: 'transform 0.2s'
+                                              }}
+                                            >
+                                              {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                            </button>
+                                          </td>
+                                        )}
+                                        <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>{p.parsel}</td>
+                                        <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>{p.bag_bol_no}</td>
+                                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kat || '-'}</td>
+                                        {showAllColumns && <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kull_amaci || '-'}</td>}
+                                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontWeight: 500 }}>{p.room_count}</td>
+                                        {showAllColumns && (
+                                          <>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kapali_alan ? `${p.kapali_alan} m²` : '-'}</td>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.acik_alan ? `${p.acik_alan} m²` : '-'}</td>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.merdiven_alan ? `${p.merdiven_alan} m²` : '-'}</td>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.ortak_alan ? `${p.ortak_alan} m²` : '-'}</td>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.net_alan ? `${p.net_alan} m²` : '-'}</td>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kapali_acik_alan ? `${p.kapali_acik_alan} m²` : '-'}</td>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontWeight: 500 }}>{p.daire_sahibi || '-'}</td>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.brut_alan ? `${p.brut_alan} m²` : '-'}</td>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.portfoy_adi || '-'}</td>
+                                            <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.extra_ozellik || '-'}</td>
+                                          </>
+                                        )}
+                                        {!showAllColumns && (
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>
+                                            {p.net_alan ? `${p.net_alan}m²` : '-'} / {p.brut_alan ? `${p.brut_alan}m²` : '-'}
+                                          </td>
+                                        )}
+                                        {!showAllColumns && (
+                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--color-primary)', fontSize: '0.75rem', fontWeight: 600 }}>
+                                            {p.extra_ozellik || '-'}
+                                          </td>
+                                        )}
+                                        <td style={{ padding: '0.5rem 0.5rem' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                            <input
+                                              key={p.id + '-' + p.price}
+                                              type="text"
+                                              defaultValue={formatNumberWithDots(p.price)}
+                                              onChange={(e) => {
+                                                e.target.value = formatNumberWithDots(e.target.value);
+                                              }}
+                                              onBlur={async (e) => {
+                                                const newVal = Number(e.target.value.replace(/\D/g, '')) || 0;
+                                                if (newVal !== p.price) {
+                                                  await handleInlinePropertyUpdate(p, 'price', newVal);
+                                                }
+                                              }}
+                                              onKeyDown={async (e) => {
+                                                if (e.key === 'Enter') {
+                                                  const input = e.target as HTMLInputElement;
+                                                  const newVal = Number(input.value.replace(/\D/g, '')) || 0;
+                                                  if (newVal !== p.price) {
+                                                    await handleInlinePropertyUpdate(p, 'price', newVal);
+                                                    input.blur();
+                                                  }
+                                                }
+                                              }}
+                                              className="form-control"
+                                              style={{ padding: '0.25rem 0.5rem', height: '28px', fontSize: '0.85rem', width: '100px' }}
+                                            />
+                                          </div>
                                         </td>
-                                      )}
-                                      <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>{p.parsel}</td>
-                                      <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>{p.bag_bol_no}</td>
-                                      <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kat || '-'}</td>
-                                      {showAllColumns && <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kull_amaci || '-'}</td>}
-                                      <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontWeight: 500 }}>{p.room_count}</td>
-                                      {showAllColumns && (
-                                        <>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kapali_alan ? `${p.kapali_alan} m²` : '-'}</td>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.acik_alan ? `${p.acik_alan} m²` : '-'}</td>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.merdiven_alan ? `${p.merdiven_alan} m²` : '-'}</td>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.ortak_alan ? `${p.ortak_alan} m²` : '-'}</td>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.net_alan ? `${p.net_alan} m²` : '-'}</td>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.kapali_acik_alan ? `${p.kapali_acik_alan} m²` : '-'}</td>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)', fontWeight: 500 }}>{p.daire_sahibi || '-'}</td>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.brut_alan ? `${p.brut_alan} m²` : '-'}</td>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.portfoy_adi || '-'}</td>
-                                          <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{p.extra_ozellik || '-'}</td>
-                                        </>
-                                      )}
-                                      {!showAllColumns && (
-                                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>
-                                          {p.net_alan ? `${p.net_alan}m²` : '-'} / {p.brut_alan ? `${p.brut_alan}m²` : '-'}
-                                        </td>
-                                      )}
-                                      {!showAllColumns && (
-                                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--color-primary)', fontSize: '0.75rem', fontWeight: 600 }}>
-                                          {p.extra_ozellik || '-'}
-                                        </td>
-                                      )}
-                                      <td style={{ padding: '0.5rem 0.5rem' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                        <td style={{ padding: '0.5rem 0.5rem' }}>
                                           <input
-                                            key={p.id + '-' + p.price}
                                             type="text"
-                                            defaultValue={formatNumberWithDots(p.price)}
-                                            onChange={(e) => {
-                                              e.target.value = formatNumberWithDots(e.target.value);
-                                            }}
+                                            defaultValue={p.portfoy_kimde || ''}
+                                            placeholder="Açık/Kapalı/NOVA"
                                             onBlur={async (e) => {
-                                              const newVal = Number(e.target.value.replace(/\D/g, '')) || 0;
-                                              if (newVal !== p.price) {
-                                                await handleInlinePropertyUpdate(p, 'price', newVal);
+                                              const newVal = e.target.value.trim();
+                                              if (newVal !== (p.portfoy_kimde || '')) {
+                                                await handleInlinePropertyUpdate(p, 'portfoy_kimde', newVal);
                                               }
                                             }}
                                             onKeyDown={async (e) => {
                                               if (e.key === 'Enter') {
                                                 const input = e.target as HTMLInputElement;
-                                                const newVal = Number(input.value.replace(/\D/g, '')) || 0;
-                                                if (newVal !== p.price) {
-                                                  await handleInlinePropertyUpdate(p, 'price', newVal);
+                                                const newVal = input.value.trim();
+                                                if (newVal !== (p.portfoy_kimde || '')) {
+                                                  await handleInlinePropertyUpdate(p, 'portfoy_kimde', newVal);
                                                   input.blur();
                                                 }
                                               }
                                             }}
                                             className="form-control"
-                                            style={{ padding: '0.25rem 0.5rem', height: '28px', fontSize: '0.85rem', width: '100px' }}
+                                            style={{
+                                              padding: '0.25rem 0.5rem',
+                                              height: '28px',
+                                              fontSize: '0.85rem',
+                                              width: '100px',
+                                              color: String(p.portfoy_kimde).toLowerCase() === 'kapalı' ? 'var(--color-danger)' : 
+                                                     String(p.portfoy_kimde).toLowerCase() === 'nova' ? 'var(--color-warning)' : 'var(--color-success)'
+                                            }}
                                           />
-                                        </div>
-                                      </td>
-                                      <td style={{ padding: '0.5rem 0.5rem' }}>
-                                        <input
-                                          type="text"
-                                          defaultValue={p.portfoy_kimde || ''}
-                                          placeholder="Açık/Kapalı/NOVA"
-                                          onBlur={async (e) => {
-                                            const newVal = e.target.value.trim();
-                                            if (newVal !== (p.portfoy_kimde || '')) {
-                                              await handleInlinePropertyUpdate(p, 'portfoy_kimde', newVal);
-                                            }
-                                          }}
-                                          onKeyDown={async (e) => {
-                                            if (e.key === 'Enter') {
-                                              const input = e.target as HTMLInputElement;
-                                              const newVal = input.value.trim();
-                                              if (newVal !== (p.portfoy_kimde || '')) {
-                                                await handleInlinePropertyUpdate(p, 'portfoy_kimde', newVal);
-                                                input.blur();
-                                              }
-                                            }
-                                          }}
-                                          className="form-control"
-                                          style={{
-                                            padding: '0.25rem 0.5rem',
-                                            height: '28px',
-                                            fontSize: '0.85rem',
-                                            width: '100px',
-                                            color: String(p.portfoy_kimde).toLowerCase() === 'kapalı' ? 'var(--color-danger)' : 
-                                                   String(p.portfoy_kimde).toLowerCase() === 'nova' ? 'var(--color-warning)' : 'var(--color-success)'
-                                          }}
-                                        />
-                                      </td>
-                                      <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
-                                        <button
-                                          onClick={() => handleDeleteProperty(p.id)}
-                                          style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', padding: '0.2rem' }}
-                                          title="Daireyi Sil"
-                                        >
-                                          <Trash2 size={15} />
-                                        </button>
-                                      </td>
-                                    </tr>
-                                    {isExpanded && !showAllColumns && (
-                                      <tr style={{ background: 'rgba(255, 255, 255, 0.015)' }}>
-                                        <td colSpan={10} style={{ padding: '1.25rem', borderBottom: '1px solid var(--glass-border)' }}>
-                                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', color: 'var(--text-secondary)' }}>
-                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Kullanım Amacı:</span> {p.kull_amaci || '-'}</div>
-                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Kapalı Alan:</span> {p.kapali_alan ? `${p.kapali_alan} m²` : '-'}</div>
-                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Açık Alan:</span> {p.acik_alan ? `${p.acik_alan} m²` : '-'}</div>
-                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Merdiven Alanı:</span> {p.merdiven_alan ? `${p.merdiven_alan} m²` : '-'}</div>
-                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Ortak Alan Payı:</span> {p.ortak_alan ? `${p.ortak_alan} m²` : '-'}</div>
-                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Net Alan:</span> {p.net_alan ? `${p.net_alan} m²` : '-'}</div>
-                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Kapalı+Açık Alan:</span> {p.kapali_acik_alan ? `${p.kapali_acik_alan} m²` : '-'}</div>
-                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Daire Sahibi:</span> {p.daire_sahibi || '-'}</div>
-                                            <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Portföy Adı:</span> {p.portfoy_adi || '-'}</div>
-                                          </div>
+                                        </td>
+                                        <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center' }}>
+                                          <input
+                                            type="checkbox"
+                                            checked={!!p.is_sold}
+                                            onChange={async (e) => {
+                                              await handleInlinePropertyUpdate(p, 'is_sold', e.target.checked);
+                                            }}
+                                            style={{
+                                              width: '18px',
+                                              height: '18px',
+                                              cursor: 'pointer',
+                                              accentColor: 'var(--color-primary)'
+                                            }}
+                                          />
                                         </td>
                                       </tr>
-                                    )}
-                                  </React.Fragment>
-                                );
-                              })}
+                                      {isExpanded && !showAllColumns && (
+                                        <tr style={{ background: 'rgba(255, 255, 255, 0.015)' }}>
+                                          <td colSpan={10} style={{ padding: '1.25rem', borderBottom: '1px solid var(--glass-border)' }}>
+                                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', color: 'var(--text-secondary)' }}>
+                                              <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Kullanım Amacı:</span> {p.kull_amaci || '-'}</div>
+                                              <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Kapalı Alan:</span> {p.kapali_alan ? `${p.kapali_alan} m²` : '-'}</div>
+                                              <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Açık Alan:</span> {p.acik_alan ? `${p.acik_alan} m²` : '-'}</div>
+                                              <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Merdiven Alanı:</span> {p.merdiven_alan ? `${p.merdiven_alan} m²` : '-'}</div>
+                                              <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Ortak Alan Payı:</span> {p.ortak_alan ? `${p.ortak_alan} m²` : '-'}</div>
+                                              <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Net Alan:</span> {p.net_alan ? `${p.net_alan} m²` : '-'}</div>
+                                              <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Kapalı+Açık Alan:</span> {p.kapali_acik_alan ? `${p.kapali_acik_alan} m²` : '-'}</div>
+                                              <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Daire Sahibi:</span> {p.daire_sahibi || '-'}</div>
+                                              <div><span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>Portföy Adı:</span> {p.portfoy_adi || '-'}</div>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        );
+                      };
+
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          {renderTable(filteredActiveProps, false)}
+                          
+                          {soldProps.length > 0 && (
+                            <div style={{ marginTop: '2.5rem', borderTop: '1px dashed var(--glass-border)', paddingTop: '1.5rem' }}>
+                              <h3 style={{ 
+                                fontSize: '1.15rem', 
+                                fontWeight: 800, 
+                                marginBottom: '1.25rem', 
+                                color: 'var(--text-muted)', 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: '0.4rem' 
+                              }}>
+                                <CheckCircle2 size={18} style={{ color: 'var(--text-muted)' }} />
+                                Satılan Daireler ({filteredSoldProps.length})
+                              </h3>
+                              {renderTable(filteredSoldProps, true)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-tab 3: Müşteri Veritabanı */}
+              {matchmakerSubTab === 'database' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
+                  
+                  {/* Search Bar */}
+                  <div style={{ display: 'flex', gap: '0.5rem', maxWidth: '400px', position: 'relative' }}>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Müşteri adı, telefon veya konum ara..."
+                      value={leadDbSearchQuery}
+                      onChange={(e) => setLeadDbSearchQuery(e.target.value)}
+                      style={{ paddingLeft: '2.5rem' }}
+                    />
+                    <Search size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-secondary)' }} />
+                  </div>
+
+                  {/* Müşteri Database Tablosu */}
+                  <div className="glass-panel animate-fade-in" style={{ overflowX: 'auto', padding: '1rem' }}>
+                    {(() => {
+                      const processedDbLeads = getProcessedDbLeads();
+
+                      if (processedDbLeads.length === 0) {
+                        return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Müşteri bulunamadı.</div>;
+                      }
+
+                      return (
+                        <div style={{ overflowX: 'auto' }}>
+                          <table className="crm-table" style={{ width: '100%', minWidth: '1700px', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                            <thead>
+                              <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '160px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-name' ? null : 'db-name')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Müşteri Adı Soyadı</span>
+                                    <Filter size={12} style={{ color: dbFilters['name'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['name'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'name', 'Müşteri Adı Soyadı', leads, l => l.name)}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '140px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-phone' ? null : 'db-phone')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Cep Telefonu</span>
+                                    <Filter size={12} style={{ color: dbFilters['phone'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['phone'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'phone', 'Cep Telefonu', leads, l => l.phone)}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '120px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-current_location' ? null : 'db-current_location')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Oturduğu Yer</span>
+                                    <Filter size={12} style={{ color: dbFilters['current_location'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['current_location'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'current_location', 'Oturduğu Yer', leads, l => l.current_location || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '120px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-created_at' ? null : 'db-created_at')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Database Eklenme Tr.</span>
+                                    <Filter size={12} style={{ color: dbFilters['created_at'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['created_at'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'created_at', 'Eklenme Tarihi', leads, l => l.created_at ? new Date(l.created_at).toLocaleDateString('tr-TR') : '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '110px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-warmth' ? null : 'db-warmth')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Sıcaklık</span>
+                                    <Filter size={12} style={{ color: dbFilters['warmth'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['warmth'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'warmth', 'Sıcaklık', leads, l => l.warmth === 'hot' ? '🔥 Hot' : (l.warmth === 'warm' ? '⚡ Warm' : '❄️ Cold'))}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '110px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-source' ? null : 'db-source')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Kanal</span>
+                                    <Filter size={12} style={{ color: dbFilters['source'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['source'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'source', 'Kanal', leads, l => l.source || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '110px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-room_count' ? null : 'db-room_count')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Talep Oda Tipi</span>
+                                    <Filter size={12} style={{ color: dbFilters['room_count'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['room_count'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'room_count', 'Oda Talebi', leads, l => l.room_count || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '120px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-lead_status' ? null : 'db-lead_status')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Mevcut Durum</span>
+                                    <Filter size={12} style={{ color: dbFilters['lead_status'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['lead_status'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'lead_status', 'Mevcut Durum', leads, l => l.lead_status || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '150px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-customer_question' ? null : 'db-customer_question')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Müşteri Sorusu</span>
+                                    <Filter size={12} style={{ color: dbFilters['customer_question'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['customer_question'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'customer_question', 'Müşteri Sorusu', leads, l => l.customer_question || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '220px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-notes' ? null : 'db-notes')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Son Not</span>
+                                    <Filter size={12} style={{ color: dbFilters['notes'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['notes'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'notes', 'Son Not', leads, l => l.notes || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '130px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-budget' ? null : 'db-budget')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Bütçe</span>
+                                    <Filter size={12} style={{ color: dbFilters['budget'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['budget'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'budget', 'Bütçe', leads, l => l.budget ? formatNumberWithDots(l.budget) : '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '120px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-updated_at' ? null : 'db-updated_at')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Son Güncelleme Tr.</span>
+                                    <Filter size={12} style={{ color: dbFilters['updated_at'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['updated_at'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'updated_at', 'Son Güncelleme', leads, l => l.last_update_info && l.updated_at ? new Date(l.updated_at).toLocaleDateString('tr-TR') : '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-last_update_info' ? null : 'db-last_update_info')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Güncelleme Bilgisi</span>
+                                    <Filter size={12} style={{ color: dbFilters['last_update_info'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['last_update_info'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'last_update_info', 'Güncelleme Detayı', leads, l => l.last_update_info || '-')}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {processedDbLeads.map((lead) => (
+                                <tr key={lead.id} style={{ borderBottom: '1px solid var(--glass-border)' }}>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.name}
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val && val !== lead.name) {
+                                          await handleInlineLeadUpdate(lead, 'name', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s',
+                                        fontWeight: 600
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.phone}
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val && val !== lead.phone) {
+                                          await handleInlineLeadUpdate(lead, 'phone', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.current_location || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.current_location || '')) {
+                                          await handleInlineLeadUpdate(lead, 'current_location', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>
+                                    {lead.created_at ? new Date(lead.created_at).toLocaleDateString('tr-TR') : '-'}
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <select
+                                      value={lead.warmth}
+                                      onChange={async (e) => {
+                                        await handleInlineLeadUpdate(lead, 'warmth', e.target.value);
+                                      }}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.03)',
+                                        border: '1px solid var(--glass-border)',
+                                        color: lead.warmth === 'hot' ? 'var(--color-primary)' : lead.warmth === 'warm' ? 'var(--color-warning)' : '#94a3b8',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none'
+                                      }}
+                                    >
+                                      <option value="hot">🔥 Hot</option>
+                                      <option value="warm">⚡ Warm</option>
+                                      <option value="cold">❄️ Cold</option>
+                                    </select>
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <select
+                                      value={lead.source}
+                                      onChange={async (e) => {
+                                        await handleInlineLeadUpdate(lead, 'source', e.target.value);
+                                      }}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.03)',
+                                        border: '1px solid var(--glass-border)',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none'
+                                      }}
+                                    >
+                                      <option value="Instagram">Instagram</option>
+                                      <option value="WhatsApp">WhatsApp</option>
+                                      <option value="Sahibinden">Sahibinden</option>
+                                      <option value="Referans">Referans</option>
+                                      <option value="Telefon">Telefon</option>
+                                      <option value="Diğer">Diğer</option>
+                                    </select>
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.room_count || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.room_count || '')) {
+                                          await handleInlineLeadUpdate(lead, 'room_count', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.lead_status || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.lead_status || '')) {
+                                          await handleInlineLeadUpdate(lead, 'lead_status', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.customer_question || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.customer_question || '')) {
+                                          await handleInlineLeadUpdate(lead, 'customer_question', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.notes || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.notes || '')) {
+                                          await handleInlineLeadUpdate(lead, 'notes', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={formatNumberWithDots(lead.budget)}
+                                      onChange={(e) => {
+                                        e.target.value = formatNumberWithDots(e.target.value);
+                                      }}
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = Number(e.target.value.replace(/\D/g, '')) || 0;
+                                        if (val !== lead.budget) {
+                                          await handleInlineLeadUpdate(lead, 'budget', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s',
+                                        fontWeight: 600
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>
+                                    {lead.last_update_info && lead.updated_at ? new Date(lead.updated_at).toLocaleDateString('tr-TR') : '-'}
+                                  </td>
+                                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>
+                                    {lead.last_update_info || '-'}
+                                  </td>
+                                </tr>
+                              ))}
                             </tbody>
                           </table>
                         </div>

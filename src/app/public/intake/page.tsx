@@ -5,6 +5,19 @@ import { StorageManager } from '@/lib/storage';
 import { Lead } from '@/lib/types';
 import { CheckCircle2, Send, Home, DollarSign, MapPin, Briefcase } from 'lucide-react';
 
+const COUNTRY_CODES = [
+  { code: '+90', name: 'TR (+90)' },
+  { code: '+49', name: 'DE (+49)' },
+  { code: '+44', name: 'GB (+44)' },
+  { code: '+1', name: 'US (+1)' },
+  { code: '+33', name: 'FR (+33)' },
+  { code: '+31', name: 'NL (+31)' },
+  { code: '+7', name: 'RU (+7)' },
+  { code: '+971', name: 'AE (+971)' },
+  { code: '+966', name: 'SA (+966)' },
+  { code: '+994', name: 'AZ (+994)' },
+];
+
 export default function PublicIntake() {
   const [submitted, setSubmitted] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
@@ -147,14 +160,62 @@ export default function PublicIntake() {
 
               <div className="form-group">
                 <label>Telefon Numaranız *</label>
-                <input 
-                  type="text" 
-                  required
-                  className="form-control"
-                  placeholder="Örn: 05XXXXXXXXX"
-                  value={formData.phone}
-                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                />
+                {(() => {
+                  let selectedCountryCode = '+90';
+                  let localNumber = formData.phone || '';
+                  
+                  for (const cc of COUNTRY_CODES) {
+                    if (localNumber.startsWith(cc.code)) {
+                      selectedCountryCode = cc.code;
+                      localNumber = localNumber.slice(cc.code.length).trim();
+                      break;
+                    }
+                  }
+                  
+                  if (localNumber.startsWith('+') && selectedCountryCode === '+90' && !formData.phone?.startsWith('+90')) {
+                    const match = localNumber.match(/^(\+\d+)\s*(.*)$/);
+                    if (match) {
+                      selectedCountryCode = match[1];
+                      localNumber = match[2];
+                    }
+                  }
+
+                  return (
+                    <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
+                      <select
+                        className="form-control"
+                        style={{ width: '110px', flexShrink: 0, paddingRight: '0.2rem' }}
+                        value={selectedCountryCode}
+                        onChange={(e) => {
+                          const newCode = e.target.value;
+                          setFormData({
+                            ...formData,
+                            phone: newCode + (localNumber ? ' ' + localNumber : '')
+                          });
+                        }}
+                      >
+                        {COUNTRY_CODES.map(cc => (
+                          <option key={cc.code} value={cc.code}>{cc.name}</option>
+                        ))}
+                      </select>
+                      <input 
+                        type="text" 
+                        required
+                        className="form-control" 
+                        placeholder="5XX XXX XX XX" 
+                        style={{ flexGrow: 1 }}
+                        value={localNumber}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFormData({
+                            ...formData,
+                            phone: selectedCountryCode + (val ? ' ' + val : '')
+                          });
+                        }}
+                      />
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="form-group">
