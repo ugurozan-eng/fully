@@ -4167,7 +4167,6 @@ export default function Home() {
                       {renderDistributionCard('Müşteri Sıcaklık Dağılımı', 'warmth', reportFilteredLeads)}
                       {renderDistributionCard('Edinme Kanalları Dağılımı', 'source', reportFilteredLeads)}
                       {renderDistributionCard('Oda Sayısı Talebi', 'room_count', reportFilteredLeads)}
-                      {renderDistributionCard('Alım Amacı Dağılımı', 'purpose', reportFilteredLeads)}
                       {renderDistributionCard('Şehir/Ülke Dağılımı', 'current_location', reportFilteredLeads)}
                       {renderDistributionCard('Müşteri Talepleri / Soruları', 'customer_question', reportFilteredLeads)}
                     </div>

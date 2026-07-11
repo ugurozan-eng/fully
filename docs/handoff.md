@@ -107,7 +107,7 @@ Eşleştirici ekranı horizontal sub-tab yapısına sahiptir:
 ### 4. Raporlama ve Analiz
 * **Info (Boss Daily Report)**: Günlük CRM aktivite özetini patrona WhatsApp üzerinden doğrudan göndermek için şablonlu text üreteç.
 * **Raporlar (CRM Raporları)**: Rapor leads tablosu üzerinde Excel tipi filtreleme ve sıralama sistemi. Tarih filtreleri ("Tüm Zamanlar", "Bugün", "Dün", "Bu Hafta", "Bu Ay", "Tarih Aralığı") ile veriyi süzme. Başlığın yanındaki "Excel'e Aktar" butonu ile filtrelenmiş ve sıralanmış güncel verileri otomatik kolon genişlikleri ve sayısal bütçe formatı ile doğrudan `.xlsx` formatında dışa aktarma.
-* **KPI Grafikleri**: Alt kısımdaki 6 adet dağılım grafiği (Sıcaklık, Müşteri Edinme Kanalları, Oda İhtiyacı vb.) **bilinmeyen, blank (`""`) veya `"-"` değerleri oransal hesaplamaya dahil etmeyecek** şekilde güncellenmiştir.
+* **KPI Grafikleri**: Alt kısımdaki 5 adet dağılım grafiği (Sıcaklık, Müşteri Edinme Kanalları, Oda İhtiyacı vb. - Alım Amacı grafiği kaldırılmıştır) **bilinmeyen, blank (`""`) veya `"-"` değerleri oransal hesaplamaya dahil etmeyecek** şekilde güncellenmiştir.
 
 ### 5. Yeni Kayıt Formları & Boş Başlangıç
 * Yeni Müşteri Ekleme ve Daire Ekleme formlarında `room_count` varsayılan değeri `'2+1'` yerine boş string `''` yapılmıştır. Kullanıcının herhangi bir varsayılan seçim görmeden sıfırdan seçim yapması sağlanmıştır.
