@@ -9,7 +9,7 @@ import {
   Plus, Phone, Calendar, Trash2, Edit, Check, X, 
   AlertTriangle, AlertCircle, Share2, QrCode, Search, 
   RefreshCw, Briefcase, MapPin, Heart, DollarSign, MessageCircle,
-  CheckCircle2, Menu, Info, ChevronUp, ChevronDown, BarChart3, Users, Sparkles, Filter, Database
+  CheckCircle2, Menu, Info, ChevronUp, ChevronDown, BarChart3, Users, Sparkles, Filter, Database, Download
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import * as XLSX from 'xlsx';
@@ -1994,6 +1994,55 @@ export default function Home() {
       ? `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodedText}`
       : `https://api.whatsapp.com/send?text=${encodedText}`;
     window.open(url, '_blank');
+  };
+
+  // Export current filtered report leads to Excel (.xlsx) file
+  const handleExportToExcel = () => {
+    const reportFilteredLeads = getProcessedReportLeads();
+    if (reportFilteredLeads.length === 0) {
+      alert("Aktarılacak veri bulunamadı.");
+      return;
+    }
+
+    const dataToExport = reportFilteredLeads.map(lead => {
+      let warmthText = 'Cold';
+      if (lead.warmth === 'hot') warmthText = '🔥 Hot';
+      else if (lead.warmth === 'warm') warmthText = '⚡ Warm';
+      else if (lead.warmth === 'cold') warmthText = '❄️ Cold';
+
+      return {
+        "Müşteri Adı Soyadı": lead.name || '',
+        "Cep Telefonu": lead.phone || '',
+        "Oturduğu Yer": lead.current_location || '',
+        "Database Eklenme Tr.": lead.created_at ? new Date(lead.created_at).toLocaleDateString('tr-TR') : '',
+        "Sıcaklık": warmthText,
+        "Kanal": lead.source || '',
+        "Oda Talebi": lead.room_count || '',
+        "Mevcut Durum": lead.lead_status || '',
+        "Müşteri Sorusu": lead.customer_question || '',
+        "Son Not": lead.notes || '',
+        "Bütçe": lead.budget || 0,
+        "Son Güncelleme": lead.updated_at ? new Date(lead.updated_at).toLocaleDateString('tr-TR') : '',
+        "Güncelleme Detayı": lead.last_update_info || ''
+      };
+    });
+
+    const ws = XLSX.utils.json_to_sheet(dataToExport);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Filtreli Müşteriler");
+
+    // Auto-fit column widths
+    const maxLens = Object.keys(dataToExport[0]).map(key => {
+      let maxVal = key.length;
+      dataToExport.forEach(row => {
+        const val = String((row as any)[key] || '');
+        if (val.length > maxVal) maxVal = val.length;
+      });
+      return { wch: maxVal + 3 };
+    });
+    ws['!cols'] = maxLens;
+
+    XLSX.writeFile(wb, "Rapor_Filtreli_Musteriler.xlsx");
   };
 
   // Filter leads by search query
@@ -4125,7 +4174,25 @@ export default function Home() {
 
                     {/* Table Section */}
                     <div className="glass-panel animate-fade-in" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
-                      <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: 'var(--color-primary)' }}>Rapor Filtreli Müşteri Listesi</h3>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                        <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: 'var(--color-primary)' }}>Rapor Filtreli Müşteri Listesi</h3>
+                        <button
+                          onClick={handleExportToExcel}
+                          className="glow-btn"
+                          style={{
+                            background: 'var(--success-gradient)',
+                            padding: '0.45rem 1rem',
+                            fontSize: '0.85rem',
+                            borderRadius: '8px',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.4rem'
+                          }}
+                        >
+                          <Download size={16} /> Excel'e Aktar
+                        </button>
+                      </div>
                       <div style={{ overflowX: 'auto' }}>
                         {reportFilteredLeads.length === 0 ? (
                           <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Bu kriterlerde müşteri kaydı bulunamadı.</div>
