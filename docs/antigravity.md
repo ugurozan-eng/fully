@@ -8,9 +8,9 @@ Bu dosya, projedeki en güncel durumu ve çalışma geçmişini takip etmek içi
 3. **Süreklilik:** Bu proje başka bir geliştiriciye devredilse dahi, en son nerede kalındığı bu dosya aracılığıyla kolayca takip edilebilecektir.
 
 ## Mevcut Durum (Current Status)
-* **Tarih:** 2026-07-10
-* **Faz:** Faz 6 - Satış Durum Entegrasyonu ve Varsayılan Değer Temizliği (Tamamlandı)
-* **Son Durum:** Daireler için "Satıldı" durumu eklendi. Satılan dairelerin CRM'de eşleştirilmesi engellendi ve ayrı bir "Satılan Daireler" tablosunda listelenmesi sağlandı. Formlardaki varsayılan daire oda tipi ("2+1") seçimleri temizlendi. Canlıya deployment başarıyla tamamlandı.
+* **Tarih:** 2026-07-11
+* **Faz:** Raporlama Sekmesi ve Grafiklerin Entegrasyonu (Tamamlandı)
+* **Son Durum:** Sidebar'daki Raporlar (`reports-general`) ve Info (`reports-info`) alt sekmeleri tamamen işlevsel hale getirildi. Raporlar sekmesine "Tüm Zamanlar", "Bugün", "Dün", "Bu Hafta", "Bu Ay" ve özel tarih aralığı filtreleri eklendi. 6 adet dağılım grafiği (Sıcaklık, Edinme Kaynağı, Oda Talebi, Alım Amacı, Şehir ve Sorular) boş/bilinmeyen verileri orantılamaya dahil etmeyecek şekilde saf CSS/SVG barlarla çizildi. Tablodaki Excel tarzı huni filtreler ve inline düzenlemeler entegre edildi. Production build testi başarıyla geçildi.
 
 ## Yapılacaklar Listesi (To-Do)
 - [x] Kullanıcıdan gelen soru cevaplarına göre mimariyi netleştirmek.
@@ -20,3 +20,4 @@ Bu dosya, projedeki en güncel durumu ve çalışma geçmişini takip etmek içi
 - [x] Faz 4: Matchmaker ve WhatsApp Raporlama.
 - [x] Faz 5: Raporlama/Info Sol Sidebar Menü ve Müşteri Düzenleme Grid Tablosu.
 - [x] Faz 6: Satış Durumu ve Ayrı Tablo Listeleme, Varsayılan Oda Tipi Seçimi Düzeltmeleri.
+- [x] Raporlama Sekmesi ve Analitik Grafiklerin Düzeltilmesi (Tarih filtreleri, 6 dağılım grafiği ve Excel huni filtreli rapor listesi).

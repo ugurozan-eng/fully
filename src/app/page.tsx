@@ -162,6 +162,9 @@ export default function Home() {
   const [reportFilters, setReportFilters] = useState<Record<string, string[]>>({});
   const [reportSort, setReportSort] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [reportSearchTerms, setReportSearchTerms] = useState<Record<string, string>>({});
+  const [reportDateFilter, setReportDateFilter] = useState<string>('all');
+  const [reportStartDate, setReportStartDate] = useState<string>('');
+  const [reportEndDate, setReportEndDate] = useState<string>('');
   const [dbFilters, setDbFilters] = useState<Record<string, string[]>>({});
   const [dbSort, setDbSort] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [dbSearchTerms, setDbSearchTerms] = useState<Record<string, string>>({});
@@ -669,6 +672,7 @@ export default function Home() {
       const dbApps = await StorageManager.getAppointments();
       const dbProps = await StorageManager.getProperties();
       setLeads(dbLeads);
+      setReportLeads(dbLeads);
       setAppointments(dbApps);
       setProperties(dbProps);
     } catch (err) {
@@ -1703,10 +1707,107 @@ export default function Home() {
     );
   };
 
+  // Get distribution statistics for reports charts, excluding empty/unknown and grouping after limit
+  const getDistributionData = (leadsList: Lead[], key: keyof Lead, limit = 5) => {
+    const counts: Record<string, number> = {};
+    let totalValid = 0;
+
+    leadsList.forEach(lead => {
+      const rawVal = lead[key];
+      if (rawVal === undefined || rawVal === null) return;
+      let strVal = String(rawVal).trim();
+
+      if (strVal === '' || strVal === '-' || strVal.toLowerCase() === 'bilinmiyor' || strVal.toLowerCase() === 'unknown') {
+        return;
+      }
+
+      if (key === 'warmth') {
+        if (strVal === 'hot') strVal = '🔥 Hot';
+        else if (strVal === 'warm') strVal = '⚡ Warm';
+        else if (strVal === 'cold') strVal = '❄️ Cold';
+      }
+
+      counts[strVal] = (counts[strVal] || 0) + 1;
+      totalValid++;
+    });
+
+    const sortedEntries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+    let data = [];
+    if (sortedEntries.length > limit) {
+      const topEntries = sortedEntries.slice(0, limit - 1);
+      const otherEntries = sortedEntries.slice(limit - 1);
+      const otherCount = otherEntries.reduce((sum, [, count]) => sum + count, 0);
+
+      data = topEntries.map(([label, count]) => ({
+        label,
+        count,
+        percentage: totalValid > 0 ? (count / totalValid) * 100 : 0
+      }));
+
+      data.push({
+        label: 'Diğer',
+        count: otherCount,
+        percentage: totalValid > 0 ? (otherCount / totalValid) * 100 : 0
+      });
+    } else {
+      data = sortedEntries.map(([label, count]) => ({
+        label,
+        count,
+        percentage: totalValid > 0 ? (count / totalValid) * 100 : 0
+      }));
+    }
+
+    return { data, totalValid };
+  };
+
   // Get processed leads for reports table (filtered and sorted)
   const getProcessedReportLeads = () => {
     if (!reportLeads) return [];
     let result = [...reportLeads];
+
+    // Apply date filter
+    if (reportDateFilter !== 'all') {
+      const now = new Date();
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+      result = result.filter(lead => {
+        if (!lead.created_at) return false;
+        const leadDate = new Date(lead.created_at);
+
+        if (reportDateFilter === 'today') {
+          return leadDate >= todayStart && leadDate <= todayEnd;
+        }
+        if (reportDateFilter === 'yesterday') {
+          const yesterdayStart = new Date(todayStart);
+          yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+          const yesterdayEnd = new Date(todayEnd);
+          yesterdayEnd.setDate(yesterdayEnd.getDate() - 1);
+          return leadDate >= yesterdayStart && leadDate <= yesterdayEnd;
+        }
+        if (reportDateFilter === 'this-week') {
+          const day = now.getDay();
+          const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+          const monday = new Date(now.getFullYear(), now.getMonth(), diff);
+          monday.setHours(0, 0, 0, 0);
+          return leadDate >= monday;
+        }
+        if (reportDateFilter === 'this-month') {
+          const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+          return leadDate >= firstDayOfMonth;
+        }
+        if (reportDateFilter === 'custom') {
+          if (!reportStartDate) return true;
+          const start = new Date(reportStartDate);
+          start.setHours(0, 0, 0, 0);
+          const end = reportEndDate ? new Date(reportEndDate) : new Date();
+          end.setHours(23, 59, 59, 999);
+          return leadDate >= start && leadDate <= end;
+        }
+        return true;
+      });
+    }
 
     // Apply column filters
     Object.entries(reportFilters).forEach(([key, selectedVals]) => {
@@ -1910,6 +2011,61 @@ export default function Home() {
   const warmLeads = filteredLeads.filter(l => l.warmth === 'warm');
   const hotLeads = filteredLeads.filter(l => l.warmth === 'hot');
 
+  // Render distribution card helper for reports charts
+  const renderDistributionCard = (title: string, dataKey: keyof Lead, leadsList: Lead[]) => {
+    const { data, totalValid } = getDistributionData(leadsList, dataKey);
+
+    return (
+      <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', minHeight: '280px' }}>
+        <h3 style={{ fontSize: '1rem', fontWeight: 700, borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: 0 }}>
+          <span>{title}</span>
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 400 }}>{totalValid} geçerli veri</span>
+        </h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', flex: 1, justifyContent: 'center' }}>
+          {data.length === 0 ? (
+            <p style={{ textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem', margin: 0 }}>Geçerli veri bulunmamaktadır.</p>
+          ) : (
+            data.map((item, idx) => {
+              let barColor = 'var(--primary-gradient)';
+              if (dataKey === 'warmth') {
+                if (item.label.toLowerCase() === 'hot' || item.label.includes('🔥')) barColor = 'var(--color-danger)';
+                else if (item.label.toLowerCase() === 'warm' || item.label.includes('⚡')) barColor = 'var(--color-warning)';
+                else barColor = '#60a5fa';
+              } else {
+                const colors = [
+                  'linear-gradient(90deg, #a855f7 0%, #ec4899 100%)',
+                  'linear-gradient(90deg, #06b6d4 0%, #3b82f6 100%)',
+                  'linear-gradient(90deg, #10b981 0%, #14b8a6 100%)',
+                  'linear-gradient(90deg, #f59e0b 0%, #ef4444 100%)',
+                  'linear-gradient(90deg, #6366f1 0%, #a855f7 100%)'
+                ];
+                barColor = colors[idx % colors.length];
+              }
+
+              return (
+                <div key={idx} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    <span style={{ fontWeight: 500, color: '#fff' }}>{item.label}</span>
+                    <span>{item.count} Müşteri ({item.percentage.toFixed(0)}%)</span>
+                  </div>
+                  <div style={{ height: '8px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      background: barColor,
+                      width: `${item.percentage}%`,
+                      borderRadius: '4px',
+                      transition: 'width 0.5s ease-out'
+                    }}></div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // Format currency helper
   const formatCurrency = (val: any) => {
     const num = Number(val);
@@ -1997,7 +2153,7 @@ export default function Home() {
                   </p>
                 </div>
                 <button 
-                  onClick={() => setActiveTab('reports')}
+                  onClick={() => setActiveTab('reports-general')}
                   className="glow-btn"
                   style={{ gap: '0.5rem' }}
                 >
@@ -3886,8 +4042,548 @@ export default function Home() {
             </div>
           )}
 
-          {/* TAB CONTENT: DAILY REPORTS */}
-          {activeTab === 'reports' && (
+          {/* TAB CONTENT: GENERAL REPORTS & ANALYTICS */}
+          {activeTab === 'reports-general' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%' }}>
+              
+              {/* Date Filters Header */}
+              <div className="glass-panel" style={{ padding: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+                <div>
+                  <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff', margin: 0 }}>Genel Analiz Raporları</h2>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                    CRM veritabanındaki müşteri dağılımları ve kazanım analizleri
+                  </p>
+                </div>
+                
+                {/* Date Filter Buttons */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+                  {[
+                    { id: 'all', label: 'Tüm Zamanlar' },
+                    { id: 'today', label: 'Bugün' },
+                    { id: 'yesterday', label: 'Dün' },
+                    { id: 'this-week', label: 'Bu Hafta' },
+                    { id: 'this-month', label: 'Bu Ay' },
+                    { id: 'custom', label: 'Tarih Aralığı' }
+                  ].map(btn => (
+                    <button
+                      key={btn.id}
+                      onClick={() => setReportDateFilter(btn.id)}
+                      className="glow-btn"
+                      style={{
+                        padding: '0.4rem 0.85rem',
+                        fontSize: '0.85rem',
+                        background: reportDateFilter === btn.id ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
+                        border: '1px solid var(--glass-border)',
+                        boxShadow: reportDateFilter === btn.id ? 'var(--shadow-glow)' : 'none',
+                        color: reportDateFilter === btn.id ? '#fff' : 'var(--text-secondary)'
+                      }}
+                    >
+                      {btn.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Date Inputs (Conditional) */}
+              {reportDateFilter === 'custom' && (
+                <div className="glass-panel animate-fade-in" style={{ padding: '1.25rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div className="form-group" style={{ margin: 0, flex: '1', minWidth: '180px' }}>
+                    <label style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>Başlangıç Tarihi</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={reportStartDate}
+                      onChange={(e) => setReportStartDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group" style={{ margin: 0, flex: '1', minWidth: '180px' }}>
+                    <label style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>Bitiş Tarihi</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={reportEndDate}
+                      onChange={(e) => setReportEndDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Charts Grid */}
+              {(() => {
+                const reportFilteredLeads = getProcessedReportLeads();
+                
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
+                      {renderDistributionCard('Müşteri Sıcaklık Dağılımı', 'warmth', reportFilteredLeads)}
+                      {renderDistributionCard('Edinme Kanalları Dağılımı', 'source', reportFilteredLeads)}
+                      {renderDistributionCard('Oda Sayısı Talebi', 'room_count', reportFilteredLeads)}
+                      {renderDistributionCard('Alım Amacı Dağılımı', 'purpose', reportFilteredLeads)}
+                      {renderDistributionCard('Şehir/Ülke Dağılımı', 'current_location', reportFilteredLeads)}
+                      {renderDistributionCard('Müşteri Talepleri / Soruları', 'customer_question', reportFilteredLeads)}
+                    </div>
+
+                    {/* Table Section */}
+                    <div className="glass-panel animate-fade-in" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', width: '100%' }}>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0, color: 'var(--color-primary)' }}>Rapor Filtreli Müşteri Listesi</h3>
+                      <div style={{ overflowX: 'auto' }}>
+                        {reportFilteredLeads.length === 0 ? (
+                          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Bu kriterlerde müşteri kaydı bulunamadı.</div>
+                        ) : (
+                          <table className="crm-table" style={{ width: '100%', minWidth: '1700px', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                            <thead>
+                              <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '160px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-name' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-name' ? null : 'report-name')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Müşteri Adı Soyadı</span>
+                                    <Filter size={12} style={{ color: reportFilters['name'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['name'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'name', 'Müşteri Adı Soyadı', reportLeads || leads, l => l.name)}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '140px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-phone' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-phone' ? null : 'report-phone')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Cep Telefonu</span>
+                                    <Filter size={12} style={{ color: reportFilters['phone'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['phone'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'phone', 'Cep Telefonu', reportLeads || leads, l => l.phone)}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '120px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-current_location' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-current_location' ? null : 'report-current_location')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Oturduğu Yer</span>
+                                    <Filter size={12} style={{ color: reportFilters['current_location'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['current_location'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'current_location', 'Oturduğu Yer', reportLeads || leads, l => l.current_location || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '120px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-created_at' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-created_at' ? null : 'report-created_at')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Database Eklenme Tr.</span>
+                                    <Filter size={12} style={{ color: reportFilters['created_at'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['created_at'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'created_at', 'Eklenme Tarihi', reportLeads || leads, l => l.created_at ? new Date(l.created_at).toLocaleDateString('tr-TR') : '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '110px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-warmth' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-warmth' ? null : 'report-warmth')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Sıcaklık</span>
+                                    <Filter size={12} style={{ color: reportFilters['warmth'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['warmth'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'warmth', 'Sıcaklık', reportLeads || leads, l => l.warmth === 'hot' ? '🔥 Hot' : (l.warmth === 'warm' ? '⚡ Warm' : '❄️ Cold'))}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '120px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-source' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-source' ? null : 'report-source')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Kanal</span>
+                                    <Filter size={12} style={{ color: reportFilters['source'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['source'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'source', 'Kanal', reportLeads || leads, l => l.source || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '110px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-room_count' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-room_count' ? null : 'report-room_count')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Oda Talebi</span>
+                                    <Filter size={12} style={{ color: reportFilters['room_count'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['room_count'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'room_count', 'Oda Talebi', reportLeads || leads, l => l.room_count || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '130px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-lead_status' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-lead_status' ? null : 'report-lead_status')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Mevcut Durum</span>
+                                    <Filter size={12} style={{ color: reportFilters['lead_status'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['lead_status'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'lead_status', 'Mevcut Durum', reportLeads || leads, l => l.lead_status || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '150px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-customer_question' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-customer_question' ? null : 'report-customer_question')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Müşteri Sorusu</span>
+                                    <Filter size={12} style={{ color: reportFilters['customer_question'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['customer_question'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'customer_question', 'Müşteri Sorusu', reportLeads || leads, l => l.customer_question || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '180px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-notes' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-notes' ? null : 'report-notes')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Son Not</span>
+                                    <Filter size={12} style={{ color: reportFilters['notes'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['notes'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'notes', 'Son Not', reportLeads || leads, l => l.notes || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '140px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-budget' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-budget' ? null : 'report-budget')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Bütçe</span>
+                                    <Filter size={12} style={{ color: reportFilters['budget'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['budget'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'budget', 'Bütçe', reportLeads || leads, l => l.budget ? formatNumberWithDots(l.budget) : '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '140px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-updated_at' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-updated_at' ? null : 'report-updated_at')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Son Güncelleme</span>
+                                    <Filter size={12} style={{ color: reportFilters['updated_at'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['updated_at'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'updated_at', 'Son Güncelleme', reportLeads || leads, l => l.last_update_info && l.updated_at ? new Date(l.updated_at).toLocaleDateString('tr-TR') : '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '180px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-last_update_info' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-last_update_info' ? null : 'report-last_update_info')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Güncelleme Detayı</span>
+                                    <Filter size={12} style={{ color: reportFilters['last_update_info'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['last_update_info'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'last_update_info', 'Güncelleme Detayı', reportLeads || leads, l => l.last_update_info || '-')}
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {reportFilteredLeads.map((lead, idx) => (
+                                <tr key={lead.id} style={{ 
+                                  borderBottom: '1px solid var(--glass-border)',
+                                  background: idx % 2 === 0 ? 'rgba(255,255,255,0.01)' : 'transparent',
+                                  transition: 'background-color 0.15s'
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.03)'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = idx % 2 === 0 ? 'rgba(255,255,255,0.01)' : 'transparent'; }}
+                                >
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.name}
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val && val !== lead.name) {
+                                          await handleInlineLeadUpdate(lead, 'name', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s',
+                                        fontWeight: 600
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.phone}
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val && val !== lead.phone) {
+                                          await handleInlineLeadUpdate(lead, 'phone', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.current_location || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.current_location || '')) {
+                                          await handleInlineLeadUpdate(lead, 'current_location', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>
+                                    {lead.created_at ? new Date(lead.created_at).toLocaleDateString('tr-TR') : '-'}
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <select
+                                      defaultValue={lead.warmth}
+                                      onChange={async (e) => {
+                                        const val = e.target.value;
+                                        await handleInlineLeadUpdate(lead, 'warmth', val);
+                                      }}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.04)',
+                                        border: '1px solid var(--glass-border)',
+                                        color: '#fff',
+                                        borderRadius: '4px',
+                                        padding: '0.25rem 0.4rem',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                        width: '100%'
+                                      }}
+                                    >
+                                      <option value="hot" style={{ background: '#120f24', color: 'var(--color-danger)' }}>🔥 Hot</option>
+                                      <option value="warm" style={{ background: '#120f24', color: 'var(--color-warning)' }}>⚡ Warm</option>
+                                      <option value="cold" style={{ background: '#120f24', color: '#60a5fa' }}>❄️ Cold</option>
+                                    </select>
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <select
+                                      defaultValue={lead.source || ''}
+                                      onChange={async (e) => {
+                                        const val = e.target.value;
+                                        await handleInlineLeadUpdate(lead, 'source', val);
+                                      }}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.04)',
+                                        border: '1px solid var(--glass-border)',
+                                        color: '#fff',
+                                        borderRadius: '4px',
+                                        padding: '0.25rem 0.4rem',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                        width: '100%'
+                                      }}
+                                    >
+                                      <option value="" style={{ background: '#120f24' }}>- Seçin -</option>
+                                      <option value="Instagram" style={{ background: '#120f24' }}>Instagram</option>
+                                      <option value="WhatsApp" style={{ background: '#120f24' }}>WhatsApp</option>
+                                      <option value="Sahibinden" style={{ background: '#120f24' }}>Sahibinden</option>
+                                      <option value="Referans" style={{ background: '#120f24' }}>Referans</option>
+                                      <option value="Telefon" style={{ background: '#120f24' }}>Telefon</option>
+                                      <option value="Diğer" style={{ background: '#120f24' }}>Diğer</option>
+                                    </select>
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.room_count || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.room_count || '')) {
+                                          await handleInlineLeadUpdate(lead, 'room_count', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.lead_status || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.lead_status || '')) {
+                                          await handleInlineLeadUpdate(lead, 'lead_status', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.customer_question || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.customer_question || '')) {
+                                          await handleInlineLeadUpdate(lead, 'customer_question', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={lead.notes || ''}
+                                      placeholder="-"
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = e.target.value.trim();
+                                        if (val !== (lead.notes || '')) {
+                                          await handleInlineLeadUpdate(lead, 'notes', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s'
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <input
+                                      type="text"
+                                      defaultValue={formatNumberWithDots(lead.budget)}
+                                      onChange={(e) => {
+                                        e.target.value = formatNumberWithDots(e.target.value);
+                                      }}
+                                      onFocus={(e) => {
+                                        e.target.style.borderColor = 'var(--glass-border)';
+                                        e.target.style.backgroundColor = 'rgba(255,255,255,0.03)';
+                                      }}
+                                      onBlur={async (e) => {
+                                        e.target.style.borderColor = 'transparent';
+                                        e.target.style.backgroundColor = 'transparent';
+                                        const val = Number(e.target.value.replace(/\D/g, '')) || 0;
+                                        if (val !== lead.budget) {
+                                          await handleInlineLeadUpdate(lead, 'budget', val);
+                                        }
+                                      }}
+                                      style={{
+                                        background: 'transparent',
+                                        border: '1px solid transparent',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        transition: 'border-color 0.15s, background-color 0.15s',
+                                        fontWeight: 600
+                                      }}
+                                    />
+                                  </td>
+                                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>
+                                    {lead.last_update_info && lead.updated_at ? new Date(lead.updated_at).toLocaleDateString('tr-TR') : '-'}
+                                  </td>
+                                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>
+                                    {lead.last_update_info || '-'}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+            </div>
+          )}
+
+          {/* TAB CONTENT: DAILY REPORTS (INFO) */}
+          {activeTab === 'reports-info' && (
             <div className="glass-panel" style={{ maxWidth: '700px', margin: '0 auto' }}>
               <h2 style={{ fontSize: '1.4rem', fontWeight: 800, marginBottom: '1.25rem' }}>Patron Bilgilendirme Raporu</h2>
               <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
