@@ -4744,15 +4744,15 @@ export default function Home() {
               }}>
                 <div style={{ flex: '1', minWidth: '280px' }}>
                   <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, color: 'var(--color-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <RefreshCw size={16} /> Mevcut Dataları Sıfırla & Excel'den Tohumla
+                    <RefreshCw size={16} /> Sistemi Demo Verileriyle Sıfırla (Müşteri & Randevu)
                   </h3>
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
-                    Sistemdeki tüm mevcut müşteri ve randevu kayıtlarını kalıcı olarak siler ve sunucudaki `NarlıVadiEvleri_Lead Dashboard.xlsx` dosyasındaki güncel müşteri verilerini aktarır.
+                    <strong>Dikkat:</strong> Bu işlem sistemdeki tüm müşteri ve randevu kayıtlarını kalıcı olarak siler ve sunucudaki varsayılan <code>NarlıVadiEvleri_Lead Dashboard.xlsx</code> dosyasındaki demo müşteri verilerini yükler. Kendi dosyanızı yüklemek istiyorsanız lütfen aşağıdaki alanı kullanın.
                   </p>
                 </div>
                 <button
                   onClick={async () => {
-                    if (confirm('Tüm mevcut müşteri ve randevu verileriniz KALICI OLARAK SİLİNECEKTİR. Emin misiniz?')) {
+                    if (confirm('Sistemdeki tüm mevcut müşteri ve randevu verileri KALICI OLARAK SİLİNECEK ve demo verileri yüklenecektir. Emin misiniz?')) {
                       if (confirm('Lütfen bu işlemin geri alınamayacağını unutmayın. Devam etmek istiyor musunuz?')) {
                         try {
                           setImporting(true);
@@ -4780,7 +4780,7 @@ export default function Home() {
                     fontWeight: 700
                   }}
                 >
-                  {importing ? 'Aktarılıyor...' : 'Sıfırla ve Yeni Excel Verilerini Yükle'}
+                  {importing ? 'Aktarılıyor...' : 'Demo Müşteri Verilerini Yükle'}
                 </button>
               </div>
 
