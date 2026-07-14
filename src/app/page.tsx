@@ -4846,9 +4846,33 @@ export default function Home() {
                     }}
                   />
                   <QrCode size={48} style={{ color: 'var(--color-primary)', marginBottom: '1rem', opacity: 0.7 }} />
-                  <h4 style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '0.5rem' }}>{importType === 'leads' ? 'Müşteri Excel Dosyasını Seçin' : 'Daire/Portföy Excel Dosyasını Seçin'}</h4>
+                  <h4 style={{ fontWeight: 700, fontSize: '1.1rem', marginBottom: '0.75rem' }}>{importType === 'leads' ? 'Müşteri Excel Dosyasını Seçin' : 'Daire/Portföy Excel Dosyasını Seçin'}</h4>
+                  
+                  {/* Görsel Yükleme Butonu */}
+                  <div 
+                    className="glow-btn"
+                    style={{ 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      gap: '0.5rem', 
+                      background: 'var(--primary-gradient)', 
+                      padding: '0.6rem 1.5rem', 
+                      borderRadius: '8px', 
+                      fontWeight: 700, 
+                      fontSize: '0.9rem', 
+                      color: '#fff', 
+                      marginBottom: '1rem',
+                      pointerEvents: 'none' // Click passes through to the underlying file input
+                    }}
+                  >
+                    <Plus size={16} /> Excel Dosyası Seç & Yükle
+                  </div>
+
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    Desteklenen formatlar: **.xlsx, .xls, .csv**
+                    Sürükleyip bırakabilir veya tıklayarak dosya seçebilirsiniz.
+                  </p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                    Desteklenen formatlar: <strong>.xlsx, .xls, .csv</strong>
                   </p>
                   <div style={{
                     marginTop: '1.5rem',
@@ -4862,7 +4886,7 @@ export default function Home() {
                     color: 'var(--color-success)',
                     border: '1px solid rgba(52, 211, 153, 0.2)'
                   }}>
-                    <span>Politika: **Mükerrer Kayıtlara İzin Verilir (Keep Both)**</span>
+                    <span>Politika: <strong>Mükerrer Kayıtlara İzin Verilir (Keep Both)</strong></span>
                   </div>
                 </div>
               )}
