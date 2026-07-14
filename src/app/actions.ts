@@ -688,3 +688,15 @@ export async function runWarmthMigration() {
     return { success: false, message: error.message };
   }
 }
+
+export async function clearLeadsAndAppointments() {
+  if (!isDbConfigured()) return { success: false, message: 'Database not configured.' };
+  try {
+    await sql`DELETE FROM appointments`;
+    await sql`DELETE FROM leads`;
+    return { success: true, message: 'Tüm müşteri ve randevu verileri başarıyla silindi.' };
+  } catch (error: any) {
+    console.error('Failed to clear leads and appointments:', error);
+    return { success: false, message: error.message };
+  }
+}

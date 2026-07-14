@@ -258,5 +258,17 @@ export const StorageManager = {
       return res.success;
     }
     return true;
+  },
+
+  async clearLeadsAndAppointments(): Promise<boolean> {
+    const dbActive = await this.isDbActive();
+    setLocal('fully-leads', []);
+    setLocal('fully-appointments', []);
+
+    if (dbActive) {
+      const res = await actions.clearLeadsAndAppointments();
+      return res.success;
+    }
+    return true;
   }
 };

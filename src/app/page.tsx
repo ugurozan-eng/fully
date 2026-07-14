@@ -180,6 +180,8 @@ export default function Home() {
   const [selectedSheet, setSelectedSheet] = useState<string>('');
   const [excelHeaders, setExcelHeaders] = useState<string[]>([]);
   const [excelRows, setExcelRows] = useState<any[][]>([]);
+  const [leadsImportMode, setLeadsImportMode] = useState<'append' | 'overwrite'>('append');
+  const [importFormatError, setImportFormatError] = useState<boolean>(false);
   const [columnMap, setColumnMap] = useState<Record<string, string>>({
     name: '',
     phone: '',
@@ -199,6 +201,7 @@ export default function Home() {
 
   const parseSheet = (wb: XLSX.WorkBook, sheetName: string) => {
     try {
+      setImportFormatError(false);
       const ws = wb.Sheets[sheetName];
       const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }) as any[][];
 
@@ -216,11 +219,11 @@ export default function Home() {
           const row = data[i] || [];
           const hasName = row.some(cell => {
             const val = String(cell || '').toLowerCase();
-            return val.includes('isim') || val.includes('ad soyad') || val.includes('adısayadı');
+            return val.includes('isim') || val.includes('ad soyad') || val.includes('adı soyadı') || val.includes('adısayadı');
           });
           const hasPhone = row.some(cell => {
             const val = String(cell || '').toLowerCase();
-            return val === 'tel' || val.includes('telefon') || val.includes('gsm') || val.includes('telno');
+            return val === 'tel' || val.includes('telefon') || val.includes('gsm') || val.includes('telno') || val.includes('gsmno');
           });
 
           if (hasName && hasPhone) {
@@ -236,7 +239,7 @@ export default function Home() {
           const hasParsel = row.some(cell => String(cell || '').toLowerCase().includes('parsel'));
           const hasBagBol = row.some(cell => {
             const val = String(cell || '').toLowerCase();
-            return val.includes('bağ') || val.includes('bag') || val.includes('böl') || val.includes('bol');
+            return val.includes('bağ') || val.includes('bag') || val.includes('böl') || val.includes('bol') || val.includes('blok');
           });
 
           if (hasParsel || hasBagBol) {
@@ -247,16 +250,11 @@ export default function Home() {
         }
       }
 
-      // Fallback: If not found, use the first row that has at least 3 non-empty values
       if (!found) {
-        for (let i = 0; i < Math.min(data.length, 10); i++) {
-          const row = data[i] || [];
-          const nonCount = row.filter(cell => cell !== undefined && String(cell).trim() !== '').length;
-          if (nonCount >= 3) {
-            headerRowIdx = i;
-            break;
-          }
-        }
+        setImportFormatError(true);
+        setExcelHeaders([]);
+        setExcelRows([]);
+        return;
       }
 
       const headers = (data[headerRowIdx] || []).map(h => String(h || '').trim());
@@ -499,6 +497,15 @@ export default function Home() {
     }
 
     setImporting(true);
+    
+    if (leadsImportMode === 'overwrite') {
+      try {
+        await StorageManager.clearLeadsAndAppointments();
+      } catch (clearErr) {
+        console.error('Failed to clear data before overwrite import:', clearErr);
+      }
+    }
+
     let imported = 0;
 
     const nameIdx = excelHeaders.indexOf(columnMap.name);
@@ -2043,6 +2050,81 @@ export default function Home() {
     ws['!cols'] = maxLens;
 
     XLSX.writeFile(wb, "Rapor_Filtreli_Musteriler.xlsx");
+  };
+
+  // Generate and download a sample Excel template in memory
+  const handleDownloadSampleTemplate = (type: 'leads' | 'properties') => {
+    let headers: Record<string, any>[] = [];
+    let filename = '';
+
+    if (type === 'leads') {
+      filename = 'ornek_musteri_listesi_sablonu.xlsx';
+      headers = [
+        {
+          "İsim Soyisim": "Ahmet Yılmaz",
+          "Tel": "+905554443322",
+          "Lead Kanal": "Instagram",
+          "İlgilendiği Daire Tipi": "3+1",
+          "Yaşadığı Yer": "İstanbul",
+          "Bölge/Konum": "Kartal",
+          "Not": "Deniz manzaralı daire arıyor.",
+          "Durum/Aksiyon": "Sıcak",
+          "Randevu Tarihi": "15.07.2026",
+          "Bütçe": "5500000"
+        },
+        {
+          "İsim Soyisim": "Ayşe Kaya",
+          "Tel": "+905321112233",
+          "Lead Kanal": "Sahibinden.com",
+          "İlgilendiği Daire Tipi": "2+1",
+          "Yaşadığı Yer": "Ankara",
+          "Bölge/Konum": "Pendik",
+          "Not": "Yatırımlık bakıyor.",
+          "Durum/Aksiyon": "Sıcak",
+          "Randevu Tarihi": "",
+          "Bütçe": "4200000"
+        }
+      ];
+    } else {
+      filename = 'ornek_daire_portfoyu_sablonu.xlsx';
+      headers = [
+        {
+          "Parsel": "1024",
+          "BağBöl No": "12",
+          "Kat": "3",
+          "KullAmacı": "Konut",
+          "DaireTipi": "3+1",
+          "KapalıAlan (m2)": "120",
+          "Fiyat": "6500000"
+        },
+        {
+          "Parsel": "1024",
+          "BağBöl No": "15",
+          "Kat": "4",
+          "KullAmacı": "Konut",
+          "DaireTipi": "2+1",
+          "KapalıAlan (m2)": "95",
+          "Fiyat": "5200000"
+        }
+      ];
+    }
+
+    const ws = XLSX.utils.json_to_sheet(headers);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Örnek Şablon");
+
+    // Auto-fit column widths
+    const maxLens = Object.keys(headers[0]).map(key => {
+      let maxVal = key.length;
+      headers.forEach(row => {
+        const val = String(row[key] || '');
+        if (val.length > maxVal) maxVal = val.length;
+      });
+      return { wch: maxVal + 4 };
+    });
+    ws['!cols'] = maxLens;
+
+    XLSX.writeFile(wb, filename);
   };
 
   // Filter leads by search query
@@ -4787,7 +4869,7 @@ export default function Home() {
               {/* Import Type Toggle */}
               <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '1rem' }}>
                 <button
-                  onClick={() => { setImportType('leads'); setExcelHeaders([]); setExcelRows([]); setImportSuccess(false); }}
+                  onClick={() => { setImportType('leads'); setExcelHeaders([]); setExcelRows([]); setImportSuccess(false); setImportFormatError(false); }}
                   className="glow-btn animate-fade-in"
                   style={{
                     background: importType === 'leads' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
@@ -4803,7 +4885,7 @@ export default function Home() {
                   Müşteri Listesi Yükle (Leads)
                 </button>
                 <button
-                  onClick={() => { setImportType('properties'); setExcelHeaders([]); setExcelRows([]); setImportSuccess(false); }}
+                  onClick={() => { setImportType('properties'); setExcelHeaders([]); setExcelRows([]); setImportSuccess(false); setImportFormatError(false); }}
                   className="glow-btn animate-fade-in"
                   style={{
                     background: importType === 'properties' ? 'var(--primary-gradient)' : 'rgba(255, 255, 255, 0.04)',
@@ -4819,6 +4901,114 @@ export default function Home() {
                   Daire Portföyü Yükle (Properties)
                 </button>
               </div>
+
+              {/* Format Error Warning Box */}
+              {importFormatError && excelHeaders.length === 0 && !importSuccess && (
+                <div style={{
+                  background: 'rgba(239, 68, 68, 0.05)',
+                  border: '1px solid rgba(239, 68, 68, 0.2)',
+                  borderRadius: '12px',
+                  padding: '1.25rem',
+                  marginBottom: '1.5rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.75rem'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--color-danger)' }}>
+                    <AlertCircle size={20} />
+                    <h4 style={{ fontWeight: 700, margin: 0 }}>Format Hatası! Yükleme Başarısız Oldu.</h4>
+                  </div>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
+                    Yüklediğiniz Excel dosyasının kolon formatı sistem tarafından tanınamadı. Lütfen dosyanızda aşağıdaki zorunlu kolonların yer aldığından emin olun veya örnek şablonu indirin:
+                  </p>
+                  <ul style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '0 0 0 1.25rem', padding: 0 }}>
+                    {importType === 'leads' ? (
+                      <>
+                        <li><strong>İsim / Ad Soyadı / Adı Soyadı:</strong> Müşteri adını içeren sütun</li>
+                        <li><strong>Tel / Telefon / GSM / TelNo:</strong> Müşteri telefon numarasını içeren sütun</li>
+                      </>
+                    ) : (
+                      <>
+                        <li><strong>Parsel:</strong> Daire parsel numarasını içeren sütun</li>
+                        <li><strong>BağBöl / Bagbol / Blok:</strong> Bağımsız bölüm / blok numarasını içeren sütun</li>
+                      </>
+                    )}
+                  </ul>
+                  <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
+                    <button
+                      onClick={() => handleDownloadSampleTemplate(importType)}
+                      className="glow-btn"
+                      style={{
+                        background: 'var(--primary-gradient)',
+                        padding: '0.45rem 1rem',
+                        fontSize: '0.8rem',
+                        borderRadius: '6px',
+                        fontWeight: 600,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.3rem'
+                      }}
+                    >
+                      <Download size={14} /> Hazır Örnek Şablonu İndir
+                    </button>
+                    <button
+                      onClick={() => setImportFormatError(false)}
+                      className="glow-btn"
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid var(--glass-border)',
+                        color: 'var(--text-secondary)',
+                        fontSize: '0.8rem',
+                        padding: '0.45rem 1rem',
+                        borderRadius: '6px',
+                        fontWeight: 600
+                      }}
+                    >
+                      Yeniden Dene
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Leads Overwrite / Append Selector Box */}
+              {importType === 'leads' && excelHeaders.length === 0 && !importSuccess && (
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.02)',
+                  border: '1px solid var(--glass-border)',
+                  borderRadius: '12px',
+                  padding: '1.25rem',
+                  marginBottom: '1.5rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.75rem'
+                }}>
+                  <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-primary)', margin: 0 }}>
+                    Müşteri Yükleme Yöntemi Seçin:
+                  </h4>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <input
+                        type="radio"
+                        name="leadsImportMode"
+                        checked={leadsImportMode === 'append'}
+                        onChange={() => setLeadsImportMode('append')}
+                        style={{ accentColor: 'var(--color-primary)', width: '16px', height: '16px' }}
+                      />
+                      <span><strong>Mevcut Verilerin Üzerine Ekle (Önerilen):</strong> İçerideki müşteri datası silinmez, yeni yüklenenler ek olarak eklenir.</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <input
+                        type="radio"
+                        name="leadsImportMode"
+                        checked={leadsImportMode === 'overwrite'}
+                        onChange={() => setLeadsImportMode('overwrite')}
+                        style={{ accentColor: 'var(--color-primary)', width: '16px', height: '16px' }}
+                      />
+                      <span><strong>Sistemdekileri Sil ve Sıfırdan Yükle:</strong> Mevcut tüm müşteri ve randevular silinerek sıfırdan yükleme yapılır.</span>
+                    </label>
+                  </div>
+                </div>
+              )}
 
               {/* Step 1: File Upload */}
               {excelHeaders.length === 0 && !importSuccess && (
@@ -4842,7 +5032,8 @@ export default function Home() {
                       width: '100%',
                       height: '100%',
                       opacity: 0,
-                      cursor: 'pointer'
+                      cursor: 'pointer',
+                      zIndex: 10
                     }}
                   />
                   <QrCode size={48} style={{ color: 'var(--color-primary)', marginBottom: '1rem', opacity: 0.7 }} />
@@ -4861,11 +5052,38 @@ export default function Home() {
                       fontWeight: 700, 
                       fontSize: '0.9rem', 
                       color: '#fff', 
-                      marginBottom: '1rem',
+                      marginBottom: '0.5rem',
                       pointerEvents: 'none' // Click passes through to the underlying file input
                     }}
                   >
                     <Plus size={16} /> Excel Dosyası Seç & Yükle
+                  </div>
+
+                  {/* Örnek Şablon İndirme Butonu */}
+                  <div style={{ marginTop: '0.25rem', marginBottom: '1.25rem', position: 'relative', zIndex: 20 }}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDownloadSampleTemplate(importType);
+                      }}
+                      className="glow-btn"
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid var(--glass-border)',
+                        color: 'var(--text-secondary)',
+                        fontSize: '0.8rem',
+                        padding: '0.35rem 0.75rem',
+                        borderRadius: '6px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.3rem'
+                      }}
+                    >
+                      <Download size={14} /> Örnek Şablonu İndir (.xlsx)
+                    </button>
                   </div>
 
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
@@ -4874,6 +5092,8 @@ export default function Home() {
                   <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                     Desteklenen formatlar: <strong>.xlsx, .xls, .csv</strong>
                   </p>
+
+                  {/* Dinamik Politika Bilgilendirme Badge */}
                   <div style={{
                     marginTop: '1.5rem',
                     display: 'inline-flex',
@@ -4882,11 +5102,26 @@ export default function Home() {
                     padding: '0.5rem 1rem',
                     borderRadius: '20px',
                     fontSize: '0.8rem',
-                    background: 'rgba(52, 211, 153, 0.1)',
-                    color: 'var(--color-success)',
-                    border: '1px solid rgba(52, 211, 153, 0.2)'
+                    background: importType === 'properties' || (importType === 'leads' && leadsImportMode === 'overwrite')
+                      ? 'rgba(239, 68, 68, 0.1)'
+                      : 'rgba(52, 211, 153, 0.1)',
+                    color: importType === 'properties' || (importType === 'leads' && leadsImportMode === 'overwrite')
+                      ? 'var(--color-danger)'
+                      : 'var(--color-success)',
+                    border: importType === 'properties' || (importType === 'leads' && leadsImportMode === 'overwrite')
+                      ? '1px solid rgba(239, 68, 68, 0.2)'
+                      : '1px solid rgba(52, 211, 153, 0.2)'
                   }}>
-                    <span>Politika: <strong>Mükerrer Kayıtlara İzin Verilir (Keep Both)</strong></span>
+                    <span>
+                      Politika: <strong>
+                        {importType === 'properties'
+                          ? 'İçerideki tüm daire verileri silinir ve yeni yüklediğiniz dosyadaki veriler eklenir.'
+                          : leadsImportMode === 'overwrite'
+                            ? 'Mevcut tüm müşteri ve randevular silinerek sıfırdan yükleme yapılacaktır.'
+                            : 'İçerideki müşteri datası silinmez, üzerine eklenir.'
+                        }
+                      </strong>
+                    </span>
                   </div>
                 </div>
               )}

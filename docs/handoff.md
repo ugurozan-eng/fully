@@ -115,6 +115,12 @@ Eşleştirici ekranı horizontal sub-tab yapısına sahiptir:
 ### 6. QR Giriş (Public Intake)
 * `/public/intake` adresinde, projeyi ziyaret eden dış kullanıcıların kendi telefon ve taleplerini girmelerini sağlayan public form. Midnight Neon ve Forest Ocean temalarını destekler. Kayıt başarılı olduğunda özel bir teşekkür sayfasına yönlendirir.
 
+### 7. Excel/CSV Veri Yükleme Revizyonları
+* **Dinamik Politika Uyarısı:** Aktif sekmeye göre yeşil/kırmızı renkli dinamik politika rozetleri eklendi (Daire yüklemesinde silinerek yükleneceği, müşteri yüklemesinde seçime göre silineceği veya üzerine yazılacağı uyarısı verilir).
+* **Müşteri Yükleme Modu:** Müşteri yüklemeleri için "Mevcut Verilerin Üzerine Ekle" (varsayılan) ve "Sistemdekileri Sil ve Sıfırdan Yükle" seçenekleri eklendi.
+* **Kolon Format Doğrulaması:** Excel yüklendiğinde gerekli kolonlar bulunamazsa işlem durdurularak şık bir format hatası uyarısı ve zorunlu şablon sütunları listelenmektedir.
+* **Bellekte Örnek Excel Üretimi:** Arayüze "Örnek Şablonu İndir (.xlsx)" butonları eklendi. Bu butonlar dosya gereksinimi duymadan `xlsx` kütüphanesi ile çalışma zamanında örnek dosya üretip indirmektedir.
+
 ---
 
 ## 4. Bir Sonraki Oturumda Yapılacaklar & Eksiklikler (Sonraki Adım)
