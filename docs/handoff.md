@@ -119,6 +119,7 @@ Eşleştirici ekranı horizontal sub-tab yapısına sahiptir:
 * **Dinamik Politika Uyarısı:** Aktif sekmeye göre yeşil/kırmızı renkli dinamik politika rozetleri eklendi (Daire yüklemesinde silinerek yükleneceği, müşteri yüklemesinde seçime göre silineceği veya üzerine yazılacağı uyarısı verilir).
 * **Müşteri Yükleme Modu:** Müşteri yüklemeleri için "Mevcut Verilerin Üzerine Ekle" (varsayılan) ve "Sistemdekileri Sil ve Sıfırdan Yükle" seçenekleri eklendi.
 * **Kolon Format Doğrulaması:** Excel yüklendiğinde gerekli kolonlar bulunamazsa işlem durdurularak şık bir format hatası uyarısı ve zorunlu şablon sütunları listelenmektedir.
+* **Manuel Sütun Eşleştirme (Daire Portföyü):** Müşteri importunda olduğu gibi Daire Portföyü (Properties) için de manuel kolon eşleştirme dropdown'ları eklendi. Eşleşme problemleri elle kolon seçilerek giderilebilmektedir.
 * **Bellekte Örnek Excel Üretimi:** Arayüze "Örnek Şablonu İndir (.xlsx)" butonları eklendi. Bu butonlar dosya gereksinimi duymadan `xlsx` kütüphanesi ile çalışma zamanında örnek dosya üretip indirmektedir.
 
 ---

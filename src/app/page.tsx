@@ -287,6 +287,30 @@ export default function Home() {
           else if (lowerH.includes('bütçe') || lowerH.includes('fiyat')) newMap.budget = h;
         });
         setColumnMap(newMap);
+      } else {
+        // Properties Auto mapping logic
+        const newMap = {
+          parsel: '', bag_bol_no: '', kat: '', kull_amaci: '', room_count: '',
+          kapali_alan: '', acik_alan: '', price: '', portfoy_adi: '',
+          extra_ozellik: '', portfoy_kimde: '', daire_sahibi: ''
+        };
+        
+        headers.forEach((h) => {
+          const cleanH = cleanStringForCompare(h);
+          if (cleanH.includes('parsel')) newMap.parsel = h;
+          else if (cleanH.includes('bagbol') || cleanH.includes('bagimsiz') || cleanH.includes('bolum') || cleanH.includes('daireno') || cleanH === 'no' || cleanH.includes('kapino')) newMap.bag_bol_no = h;
+          else if (cleanH.includes('kat')) newMap.kat = h;
+          else if (cleanH.includes('kullamaci') || cleanH.includes('kullanim') || cleanH.includes('mesken') || cleanH.includes('amaci')) newMap.kull_amaci = h;
+          else if (cleanH.includes('dairetipi') || cleanH === 'tip' || cleanH.includes('odano') || cleanH.includes('odasayisi') || cleanH.includes('oda')) newMap.room_count = h;
+          else if (cleanH.includes('kapalian') || cleanH.includes('kapali')) newMap.kapali_alan = h;
+          else if (cleanH.includes('acikalan') || cleanH.includes('acik')) newMap.acik_alan = h;
+          else if (cleanH.includes('fiyat') || cleanH.includes('tutar') || cleanH.includes('bedel')) newMap.price = h;
+          else if (cleanH.includes('portfoy') || cleanH.includes('ad')) newMap.portfoy_adi = h;
+          else if (cleanH.includes('ozellik') || cleanH.includes('extra')) newMap.extra_ozellik = h;
+          else if (cleanH.includes('kimde') || cleanH.includes('durum')) newMap.portfoy_kimde = h;
+          else if (cleanH.includes('sahibi') || cleanH.includes('malik')) newMap.daire_sahibi = h;
+        });
+        setColumnMap(newMap);
       }
     } catch (err) {
       console.error(err);
@@ -359,18 +383,6 @@ export default function Home() {
   const runPropertiesImport = async () => {
     setImporting(true);
     let imported = 0;
-    
-    // Helper to get column index with normalized keys
-    const getIndexByNormalizedKey = (headers: string[], keyName: string): number => {
-      const target = cleanStringForCompare(keyName);
-      for (let i = 0; i < headers.length; i++) {
-        const h = cleanStringForCompare(headers[i]);
-        if (h.includes(target) || target.includes(h)) {
-          return i;
-        }
-      }
-      return -1;
-    };
 
     if (!excelWorkbook || !selectedSheet) {
       alert('Seçili workbook veya sayfa bulunamadı.');
@@ -382,37 +394,23 @@ export default function Home() {
       // Clear existing properties before importing a new spreadsheet to prevent duplicates
       await StorageManager.clearProperties();
 
-      const parselIdx = getIndexByNormalizedKey(excelHeaders, 'parsel');
-      const bagBolNoIdx = getIndexByNormalizedKey(excelHeaders, 'bağböl') >= 0 
-        ? getIndexByNormalizedKey(excelHeaders, 'bağböl') 
-        : getIndexByNormalizedKey(excelHeaders, 'bagbol');
-      const katIdx = getIndexByNormalizedKey(excelHeaders, 'kat');
-      const kullAmaciIdx = getIndexByNormalizedKey(excelHeaders, 'kullamacı') >= 0
-        ? getIndexByNormalizedKey(excelHeaders, 'kullamacı')
-        : getIndexByNormalizedKey(excelHeaders, 'kullamaci');
-      const daireTipiIdx = getIndexByNormalizedKey(excelHeaders, 'dairetipi') >= 0
-        ? getIndexByNormalizedKey(excelHeaders, 'dairetipi')
-        : getIndexByNormalizedKey(excelHeaders, 'tip');
-      const kapaliAlanIdx = getIndexByNormalizedKey(excelHeaders, 'kapalıalan') >= 0
-        ? getIndexByNormalizedKey(excelHeaders, 'kapalıalan')
-        : getIndexByNormalizedKey(excelHeaders, 'kapalianlan');
-      const acikAlanIdx = getIndexByNormalizedKey(excelHeaders, 'açıkalan') >= 0
-        ? getIndexByNormalizedKey(excelHeaders, 'açıkalan')
-        : getIndexByNormalizedKey(excelHeaders, 'acikalan');
-      const netAlanIdx = getIndexByNormalizedKey(excelHeaders, 'netalan');
-      const brutAlanIdx = getIndexByNormalizedKey(excelHeaders, 'brütalan') >= 0
-        ? getIndexByNormalizedKey(excelHeaders, 'brütalan')
-        : getIndexByNormalizedKey(excelHeaders, 'brutalan');
-      const portfoyAdiIdx = getIndexByNormalizedKey(excelHeaders, 'portfoy');
-      const extraOzellikIdx = getIndexByNormalizedKey(excelHeaders, 'extra') >= 0
-        ? getIndexByNormalizedKey(excelHeaders, 'extra')
-        : getIndexByNormalizedKey(excelHeaders, 'özellik');
-      const portfoyKimdeIdx = getIndexByNormalizedKey(excelHeaders, 'kimde');
-      const priceIdx = getIndexByNormalizedKey(excelHeaders, 'fiyat');
-      const merdivenAlanIdx = getIndexByNormalizedKey(excelHeaders, 'merdiven');
-      const ortakAlanIdx = getIndexByNormalizedKey(excelHeaders, 'ortakalan');
-      const kapaliAcikAlanIdx = getIndexByNormalizedKey(excelHeaders, 'kapalı+açık');
-      const daireSahibiIdx = getIndexByNormalizedKey(excelHeaders, 'sahibi');
+      const parselIdx = columnMap.parsel ? excelHeaders.indexOf(columnMap.parsel) : -1;
+      const bagBolNoIdx = columnMap.bag_bol_no ? excelHeaders.indexOf(columnMap.bag_bol_no) : -1;
+      const katIdx = columnMap.kat ? excelHeaders.indexOf(columnMap.kat) : -1;
+      const kullAmaciIdx = columnMap.kull_amaci ? excelHeaders.indexOf(columnMap.kull_amaci) : -1;
+      const daireTipiIdx = columnMap.room_count ? excelHeaders.indexOf(columnMap.room_count) : -1;
+      const kapaliAlanIdx = columnMap.kapali_alan ? excelHeaders.indexOf(columnMap.kapali_alan) : -1;
+      const acikAlanIdx = columnMap.acik_alan ? excelHeaders.indexOf(columnMap.acik_alan) : -1;
+      const netAlanIdx = columnMap.net_alan ? excelHeaders.indexOf(columnMap.net_alan) : -1;
+      const brutAlanIdx = columnMap.brut_alan ? excelHeaders.indexOf(columnMap.brut_alan) : -1;
+      const portfoyAdiIdx = columnMap.portfoy_adi ? excelHeaders.indexOf(columnMap.portfoy_adi) : -1;
+      const extraOzellikIdx = columnMap.extra_ozellik ? excelHeaders.indexOf(columnMap.extra_ozellik) : -1;
+      const portfoyKimdeIdx = columnMap.portfoy_kimde ? excelHeaders.indexOf(columnMap.portfoy_kimde) : -1;
+      const priceIdx = columnMap.price ? excelHeaders.indexOf(columnMap.price) : -1;
+      const merdivenAlanIdx = columnMap.merdiven_alan ? excelHeaders.indexOf(columnMap.merdiven_alan) : -1;
+      const ortakAlanIdx = columnMap.ortak_alan ? excelHeaders.indexOf(columnMap.ortak_alan) : -1;
+      const kapaliAcikAlanIdx = columnMap.kapali_acik_alan ? excelHeaders.indexOf(columnMap.kapali_acik_alan) : -1;
+      const daireSahibiIdx = columnMap.daire_sahibi ? excelHeaders.indexOf(columnMap.daire_sahibi) : -1;
 
       for (const row of excelRows) {
         const parselVal = parselIdx >= 0 ? row[parselIdx] : undefined;
@@ -487,6 +485,10 @@ export default function Home() {
 
   const runImport = async () => {
     if (importType === 'properties') {
+      if (!columnMap.parsel || !columnMap.bag_bol_no) {
+        alert('Lütfen en azından "Parsel Numarası" ve "Bağımsız Bölüm (Daire) No" kolonlarını eşleştirin.');
+        return;
+      }
       await runPropertiesImport();
       return;
     }
@@ -5155,10 +5157,128 @@ export default function Home() {
                   )}
 
                   {importType === 'properties' && (
-                    <div style={{ background: 'rgba(16, 185, 129, 0.08)', padding: '1rem', borderRadius: '10px', marginBottom: '1.5rem', border: '1px solid rgba(16, 185, 129, 0.2)' }}>
-                      <p style={{ fontSize: '0.85rem', color: 'var(--color-success)', fontWeight: 600 }}>
-                        ℹ️ ÖNTAŞ formatı otomatik algılama aktiftir. Parsel, Bağımsız Bölüm No, Kat, Oda Sayısı, Alanlar, Fiyat ve Portföy Durumu (Açık/Kapalı/NOVA) kolonları otomatik eşleştirilecektir.
-                      </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
+                      {/* Column 1: Required Fields */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Zorunlu Alanlar</h4>
+                        
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label style={{ fontWeight: 'bold' }}>Parsel Numarası *</label>
+                          <select 
+                            className="form-control"
+                            required
+                            value={columnMap.parsel}
+                            onChange={(e) => setColumnMap({ ...columnMap, parsel: e.target.value })}
+                          >
+                            <option value="">-- Kolon Seçin --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label style={{ fontWeight: 'bold' }}>Bağımsız Bölüm (Daire) No *</label>
+                          <select 
+                            className="form-control"
+                            required
+                            value={columnMap.bag_bol_no}
+                            onChange={(e) => setColumnMap({ ...columnMap, bag_bol_no: e.target.value })}
+                          >
+                            <option value="">-- Kolon Seçin --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem', marginTop: '1rem' }}>Daire Özellikleri</h4>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Kat</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.kat}
+                            onChange={(e) => setColumnMap({ ...columnMap, kat: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Kullanım Amacı (Konut/Mesken/Dükkan)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.kull_amaci}
+                            onChange={(e) => setColumnMap({ ...columnMap, kull_amaci: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Column 2: Dimensions & Details */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Alan & Fiyat Bilgileri</h4>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Daire Tipi (3+1, 2+1 vb.)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.room_count}
+                            onChange={(e) => setColumnMap({ ...columnMap, room_count: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Fiyat (Fiyat/Bedel Kolonu)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.price}
+                            onChange={(e) => setColumnMap({ ...columnMap, price: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Kapalı Alan (m²)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.kapali_alan}
+                            onChange={(e) => setColumnMap({ ...columnMap, kapali_alan: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Açık Alan (m²)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.acik_alan}
+                            onChange={(e) => setColumnMap({ ...columnMap, acik_alan: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Daire Sahibi / Malik</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.daire_sahibi}
+                            onChange={(e) => setColumnMap({ ...columnMap, daire_sahibi: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                      </div>
                     </div>
                   )}
 
