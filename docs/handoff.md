@@ -121,6 +121,7 @@ Eşleştirici ekranı horizontal sub-tab yapısına sahiptir:
 * **Müşteri Yükleme Modu:** Müşteri yüklemeleri için "Mevcut Verilerin Üzerine Ekle" (varsayılan) ve "Sistemdekileri Sil ve Sıfırdan Yükle" seçenekleri eklendi.
 * **Kolon Format Doğrulaması:** Excel yüklendiğinde gerekli kolonlar bulunamazsa işlem durdurularak şık bir format hatası uyarısı ve zorunlu şablon sütunları listelenmektedir.
 * **Manuel Sütun Eşleştirme (Daire Portföyü):** Müşteri importunda olduğu gibi Daire Portföyü (Properties) için de manuel kolon eşleştirme dropdown'ları eklendi. Eşleşme problemleri elle kolon seçilerek giderilebilmektedir.
+* **Net/Brüt Alan İthalatı & Akıllı Çözümleyici:** Metinsel veya Türkçe ondalıklı formatlardaki metrekare değerlerini (`85 m²`, `120,5` vb.) hatasız olarak sayısal verilere dönüştüren `cleanFloat` algoritması yazıldı. Kolon eşleştirici arayüze Net Alan, Brüt Alan, Ortak Alan, Merdiven Alanı ve Kapalı+Açık Alan seçicileri eklenerek 3 kolonlu tam teşekküllü bir eşleştirme kontrolü sağlandı.
 * **Bellekte Örnek Excel Üretimi:** Arayüze "Örnek Şablonu İndir (.xlsx)" butonları eklendi. Bu butonlar dosya gereksinimi duymadan `xlsx` kütüphanesi ile çalışma zamanında örnek dosya üretip indirmektedir.
 
 ---
