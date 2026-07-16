@@ -123,6 +123,10 @@ export const StorageManager = {
 
     if (dbActive) {
       const res = await actions.saveLead(leadWithUpdate);
+      if (!res.success) {
+        console.error('Failed to save lead to database:', res.message);
+        throw new Error(res.message || 'Müşteri veritabanına kaydedilemedi.');
+      }
       return res.success;
     }
     return true;
@@ -229,6 +233,10 @@ export const StorageManager = {
 
     if (dbActive) {
       const res = await actions.saveProperty(prop);
+      if (!res.success) {
+        console.error('Failed to save property to database:', res.message);
+        throw new Error(res.message || 'Daire veritabanına kaydedilemedi.');
+      }
       return res.success;
     }
     return true;

@@ -472,9 +472,9 @@ export default function Home() {
 
       setImportCount(imported);
       setImportSuccess(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Portföy içeri aktarılırken hata oluştu.');
+      alert('Portföy içeri aktarılırken hata oluştu: ' + (err?.message || err));
     } finally {
       setImporting(false);
       setExcelHeaders([]);
@@ -500,122 +500,128 @@ export default function Home() {
 
     setImporting(true);
     
-    if (leadsImportMode === 'overwrite') {
-      try {
-        await StorageManager.clearLeadsAndAppointments();
-      } catch (clearErr) {
-        console.error('Failed to clear data before overwrite import:', clearErr);
-      }
-    }
-
-    let imported = 0;
-
-    const nameIdx = excelHeaders.indexOf(columnMap.name);
-    const phoneIdx = excelHeaders.indexOf(columnMap.phone);
-    const sourceIdx = columnMap.source ? excelHeaders.indexOf(columnMap.source) : -1;
-    const roomCountIdx = columnMap.room_count ? excelHeaders.indexOf(columnMap.room_count) : -1;
-    const currentLocationIdx = columnMap.current_location ? excelHeaders.indexOf(columnMap.current_location) : -1;
-    const targetRegionIdx = columnMap.target_region ? excelHeaders.indexOf(columnMap.target_region) : -1;
-    const notesIdx = columnMap.notes ? excelHeaders.indexOf(columnMap.notes) : -1;
-    const warmthIdx = columnMap.warmth_outcome ? excelHeaders.indexOf(columnMap.warmth_outcome) : -1;
-    const appDateIdx = columnMap.appointment_date ? excelHeaders.indexOf(columnMap.appointment_date) : -1;
-    const budgetIdx = columnMap.budget ? excelHeaders.indexOf(columnMap.budget) : -1;
-
-    for (const row of excelRows) {
-      const nameVal = String(row[nameIdx] || '').trim();
-      const phoneVal = String(row[phoneIdx] || '').trim();
-
-      if (!nameVal || !phoneVal) continue; // Skip rows without name or phone
-
-      // Extract details
-      const sourceVal = sourceIdx >= 0 ? String(row[sourceIdx] || '') : 'Excel Yükleme';
-      const roomCountVal = roomCountIdx >= 0 ? String(row[roomCountIdx] || '') : '';
-      const currentLocationVal = currentLocationIdx >= 0 ? String(row[currentLocationIdx] || '') : '';
-      const targetRegionVal = targetRegionIdx >= 0 ? String(row[targetRegionIdx] || '') : '';
-      
-      // Combine multiple context if needed
-      let notesVal = notesIdx >= 0 ? String(row[notesIdx] || '') : '';
-      
-      // Smart warmth parser based on status column
-      let warmthVal: 'cold' | 'warm' | 'hot' = 'warm';
-      if (warmthIdx >= 0) {
-        const rawWarmth = String(row[warmthIdx] || '').toLowerCase();
-        if (rawWarmth.includes('beklemede')) {
-          warmthVal = 'hot';
-        } else if (rawWarmth.includes('red') || rawWarmth.includes('iptal') || rawWarmth.includes('olumsuz')) {
-          warmthVal = 'cold';
-        } else if (rawWarmth.includes('randevu') || rawWarmth.includes('sıcak') || rawWarmth.includes('kapatıldı') || rawWarmth.includes('olumlu')) {
-          warmthVal = 'hot';
+    try {
+      if (leadsImportMode === 'overwrite') {
+        try {
+          await StorageManager.clearLeadsAndAppointments();
+        } catch (clearErr) {
+          console.error('Failed to clear data before overwrite import:', clearErr);
         }
       }
 
-      const budgetVal = budgetIdx >= 0 ? Number(String(row[budgetIdx] || '').replace(/\D/g, '')) || 0 : 0;
-      
-      // Create lead
-      const leadId = crypto.randomUUID();
-      const newLead: Lead = {
-        id: leadId,
-        name: nameVal,
-        phone: phoneVal,
-        email: '',
-        source: sourceVal,
-        property_type: 'Daire', // Default
-        room_count: roomCountVal || '2+1',
-        purpose: 'Oturumluk',
-        customer_question: '',
-        lead_status: '',
-        rejection_reason: '',
-        target_region: targetRegionVal,
-        current_location: currentLocationVal,
-        budget: budgetVal,
-        warmth: warmthVal,
-        is_alert_active: true,
-        notes: notesVal,
-        created_at: new Date().toISOString(),
-      };
+      let imported = 0;
 
-      await StorageManager.saveLead(newLead);
+      const nameIdx = excelHeaders.indexOf(columnMap.name);
+      const phoneIdx = excelHeaders.indexOf(columnMap.phone);
+      const sourceIdx = columnMap.source ? excelHeaders.indexOf(columnMap.source) : -1;
+      const roomCountIdx = columnMap.room_count ? excelHeaders.indexOf(columnMap.room_count) : -1;
+      const currentLocationIdx = columnMap.current_location ? excelHeaders.indexOf(columnMap.current_location) : -1;
+      const targetRegionIdx = columnMap.target_region ? excelHeaders.indexOf(columnMap.target_region) : -1;
+      const notesIdx = columnMap.notes ? excelHeaders.indexOf(columnMap.notes) : -1;
+      const warmthIdx = columnMap.warmth_outcome ? excelHeaders.indexOf(columnMap.warmth_outcome) : -1;
+      const appDateIdx = columnMap.appointment_date ? excelHeaders.indexOf(columnMap.appointment_date) : -1;
+      const budgetIdx = columnMap.budget ? excelHeaders.indexOf(columnMap.budget) : -1;
 
-      // Create appointment if appointment date is valid
-      if (appDateIdx >= 0 && row[appDateIdx]) {
-        const rawAppDate = String(row[appDateIdx]).trim();
-        if (rawAppDate && rawAppDate !== 'Bilinmiyor') {
-          // Attempt to parse date in dd.mm.yyyy format
-          let formattedDateStr = '';
-          const parts = rawAppDate.split('.');
-          if (parts.length === 3) {
-            // Convert dd.mm.yyyy to yyyy-mm-dd
-            formattedDateStr = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}T12:00`;
-          } else {
-            const dateObj = new Date(rawAppDate);
-            if (!isNaN(dateObj.getTime())) {
-              formattedDateStr = dateObj.toISOString().slice(0, 16);
+      for (const row of excelRows) {
+        const nameVal = String(row[nameIdx] || '').trim();
+        const phoneVal = String(row[phoneIdx] || '').trim();
+
+        if (!nameVal || !phoneVal) continue; // Skip rows without name or phone
+
+        // Extract details
+        const sourceVal = sourceIdx >= 0 ? String(row[sourceIdx] || '') : 'Excel Yükleme';
+        const roomCountVal = roomCountIdx >= 0 ? String(row[roomCountIdx] || '') : '';
+        const currentLocationVal = currentLocationIdx >= 0 ? String(row[currentLocationIdx] || '') : '';
+        const targetRegionVal = targetRegionIdx >= 0 ? String(row[targetRegionIdx] || '') : '';
+        
+        // Combine multiple context if needed
+        let notesVal = notesIdx >= 0 ? String(row[notesIdx] || '') : '';
+        
+        // Smart warmth parser based on status column
+        let warmthVal: 'cold' | 'warm' | 'hot' = 'warm';
+        if (warmthIdx >= 0) {
+          const rawWarmth = String(row[warmthIdx] || '').toLowerCase();
+          if (rawWarmth.includes('beklemede')) {
+            warmthVal = 'hot';
+          } else if (rawWarmth.includes('red') || rawWarmth.includes('iptal') || rawWarmth.includes('olumsuz')) {
+            warmthVal = 'cold';
+          } else if (rawWarmth.includes('randevu') || rawWarmth.includes('sıcak') || rawWarmth.includes('kapatıldı') || rawWarmth.includes('olumlu')) {
+            warmthVal = 'hot';
+          }
+        }
+
+        const budgetVal = budgetIdx >= 0 ? Number(String(row[budgetIdx] || '').replace(/\D/g, '')) || 0 : 0;
+        
+        // Create lead
+        const leadId = crypto.randomUUID();
+        const newLead: Lead = {
+          id: leadId,
+          name: nameVal,
+          phone: phoneVal,
+          email: '',
+          source: sourceVal,
+          property_type: 'Daire', // Default
+          room_count: roomCountVal || '2+1',
+          purpose: 'Oturumluk',
+          customer_question: '',
+          lead_status: '',
+          rejection_reason: '',
+          target_region: targetRegionVal,
+          current_location: currentLocationVal,
+          budget: budgetVal,
+          warmth: warmthVal,
+          is_alert_active: true,
+          notes: notesVal,
+          created_at: new Date().toISOString(),
+        };
+
+        await StorageManager.saveLead(newLead);
+
+        // Create appointment if appointment date is valid
+        if (appDateIdx >= 0 && row[appDateIdx]) {
+          const rawAppDate = String(row[appDateIdx]).trim();
+          if (rawAppDate && rawAppDate !== 'Bilinmiyor') {
+            // Attempt to parse date in dd.mm.yyyy format
+            let formattedDateStr = '';
+            const parts = rawAppDate.split('.');
+            if (parts.length === 3) {
+              // Convert dd.mm.yyyy to yyyy-mm-dd
+              formattedDateStr = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}T12:00`;
+            } else {
+              const dateObj = new Date(rawAppDate);
+              if (!isNaN(dateObj.getTime())) {
+                formattedDateStr = dateObj.toISOString().slice(0, 16);
+              }
+            }
+
+            if (formattedDateStr) {
+              const newApp: Appointment = {
+                id: crypto.randomUUID(),
+                lead_id: leadId,
+                date_time: formattedDateStr,
+                location: 'Ofis / Yerinde Gösterim',
+                status: 'pending',
+                notes: `Excel'den otomatik oluşturuldu. Orijinal tarih: ${rawAppDate}`,
+              };
+              await StorageManager.saveAppointment(newApp);
             }
           }
-
-          if (formattedDateStr) {
-            const newApp: Appointment = {
-              id: crypto.randomUUID(),
-              lead_id: leadId,
-              date_time: formattedDateStr,
-              location: 'Ofis / Yerinde Gösterim',
-              status: 'pending',
-              notes: `Excel'den otomatik oluşturuldu. Orijinal tarih: ${rawAppDate}`,
-            };
-            await StorageManager.saveAppointment(newApp);
-          }
         }
+
+        imported++;
       }
 
-      imported++;
+      setImportCount(imported);
+      setImportSuccess(true);
+    } catch (err: any) {
+      console.error(err);
+      alert('Müşteriler içeri aktarılırken hata oluştu: ' + (err?.message || err));
+    } finally {
+      setImporting(false);
+      setExcelHeaders([]);
+      setExcelRows([]);
+      await loadAllData();
     }
-
-    setImportCount(imported);
-    setImportSuccess(true);
-    setImporting(false);
-    setExcelHeaders([]);
-    setExcelRows([]);
-    await loadAllData();
   };
 
   // Form States
