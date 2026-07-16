@@ -2740,14 +2740,19 @@ export default function Home() {
                         }}
                       >
                         <option value="">Seçiniz</option>
-                        <option value="Beklemede">Beklemede</option>
-                        <option value="Güncel Katalog Gönderildi,Davet Yapıldı">Güncel Katalog Gönderildi,Davet Yapıldı</option>
-                        <option value="Katalog Gönderimi Sonrası İletişim Devam">Katalog Gönderimi Sonrası İletişim Devam</option>
-                        <option value="Randevu Alındı">Randevu Alındı</option>
-                        <option value="Red">Red</option>
-                        <option value="Red/Fikri değişebilir">Red/Fikri değişebilir</option>
                         <option value="İlk temas">İlk temas</option>
                         <option value="Ulaşılamadı">Ulaşılamadı</option>
+                        <option value="Katalog Gönderimi Sonrası İletişim Devam">Katalog Gönderimi Sonrası İletişim Devam</option>
+                        <option value="Güncel Katalog Gönderildi,Davet Yapıldı">Güncel Katalog Gönderildi,Davet Yapıldı</option>
+                        <option value="Randevu Alındı">Randevu Alındı</option>
+                        <option value="Teklif Yapıldı">Teklif Yapıldı</option>
+                        <option value="Düşünecek">Düşünecek</option>
+                        <option value="Geldiğinde Arayacak">Geldiğinde Arayacak</option>
+                        <option value="Beklemede">Beklemede</option>
+                        <option value="Satıldı">Satıldı</option>
+                        <option value="Anketten Red">Anketten Red</option>
+                        <option value="Red">Red</option>
+                        <option value="Red/Fikri değişebilir">Red/Fikri değişebilir</option>
                       </select>
                     </div>
 
