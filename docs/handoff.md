@@ -111,6 +111,7 @@ Eşleştirici ekranı horizontal sub-tab yapısına sahiptir:
 
 ### 5. Yeni Kayıt Formları & Boş Başlangıç
 * Yeni Müşteri Ekleme ve Daire Ekleme formlarında `room_count` varsayılan değeri `'2+1'` yerine boş string `''` yapılmıştır. Kullanıcının herhangi bir varsayılan seçim görmeden sıfırdan seçim yapması sağlanmıştır.
+* **Lead Mevcut Durum Seçenekleri:** "Yeni Müşteri/Lead Kaydı" formundaki durum açılır menüsüne **Teklif Yapıldı, Düşünecek, Satıldı, Geldiğinde Arayacak ve Anketten Red** seçenekleri eklendi. Seçenekler, satış süreçlerine uygun kronolojik bir sıralamayla dizilmiştir.
 
 ### 6. QR Giriş (Public Intake)
 * `/public/intake` adresinde, projeyi ziyaret eden dış kullanıcıların kendi telefon ve taleplerini girmelerini sağlayan public form. Midnight Neon ve Forest Ocean temalarını destekler. Kayıt başarılı olduğunda özel bir teşekkür sayfasına yönlendirir.

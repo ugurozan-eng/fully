@@ -67,6 +67,47 @@ function cleanPrice(val: any): number {
   return isNaN(parsed) ? 0 : Math.round(parsed);
 }
 
+// Robust float parser for areas (supports Turkish decimals and unit suffixes)
+function cleanFloat(val: any): number {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') {
+    return isNaN(val) ? 0 : val;
+  }
+  
+  let str = String(val).trim();
+  // Remove common unit symbols like "m²", "m2", "sqm"
+  str = str.replace(/m²|m2|sqm/gi, '').trim();
+  str = str.replace(/[^0-9,\.-]/g, '');
+  
+  if (str === '') return 0;
+  
+  const lastDot = str.lastIndexOf('.');
+  const lastComma = str.lastIndexOf(',');
+  
+  if (lastDot !== -1 && lastComma !== -1) {
+    if (lastComma > lastDot) {
+      str = str.replace(/\./g, '').replace(/,/g, '.');
+    } else {
+      str = str.replace(/,/g, '');
+    }
+  } else if (lastComma !== -1) {
+    const parts = str.split(',');
+    if (parts[parts.length - 1].length === 3) {
+      str = str.replace(/,/g, '');
+    } else {
+      str = str.replace(/,/g, '.');
+    }
+  } else if (lastDot !== -1) {
+    const parts = str.split('.');
+    if (parts[parts.length - 1].length === 3 || parts.length > 2) {
+      str = str.replace(/\./g, '');
+    }
+  }
+  
+  const parsed = parseFloat(str);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
 // Helper to format raw numbers to Turkish dot separators format (e.g. 5.000.000)
 function formatNumberWithDots(val: any): string {
   if (val === undefined || val === null || val === '') return '';
@@ -423,10 +464,10 @@ export default function Home() {
         const kullAmaciVal = kullAmaciIdx >= 0 ? String(row[kullAmaciIdx] || '') : '';
         const daireTipiVal = daireTipiIdx >= 0 ? String(row[daireTipiIdx] || '') : '1+1';
         
-        const kapaliAlanVal = kapaliAlanIdx >= 0 ? Number(row[kapaliAlanIdx]) || 0 : 0;
-        const acikAlanVal = acikAlanIdx >= 0 ? Number(row[acikAlanIdx]) || 0 : 0;
-        const netAlanVal = netAlanIdx >= 0 ? Number(row[netAlanIdx]) || 0 : 0;
-        const brutAlanVal = brutAlanIdx >= 0 ? Number(row[brutAlanIdx]) || 0 : 0;
+        const kapaliAlanVal = kapaliAlanIdx >= 0 ? cleanFloat(row[kapaliAlanIdx]) : 0;
+        const acikAlanVal = acikAlanIdx >= 0 ? cleanFloat(row[acikAlanIdx]) : 0;
+        const netAlanVal = netAlanIdx >= 0 ? cleanFloat(row[netAlanIdx]) : 0;
+        const brutAlanVal = brutAlanIdx >= 0 ? cleanFloat(row[brutAlanIdx]) : 0;
         
         const portfoyAdiVal = portfoyAdiIdx >= 0 ? String(row[portfoyAdiIdx] || '') : `${parselVal}_${bagBolNoVal}`;
         const extraOzellikVal = extraOzellikIdx >= 0 ? String(row[extraOzellikIdx] || '') : '';
@@ -435,9 +476,9 @@ export default function Home() {
         const rawPrice = priceIdx >= 0 ? row[priceIdx] : 0;
         const priceVal = cleanPrice(rawPrice);
 
-        const merdivenAlanVal = merdivenAlanIdx >= 0 ? Number(row[merdivenAlanIdx]) || 0 : 0;
-        const ortakAlanVal = ortakAlanIdx >= 0 ? Number(row[ortakAlanIdx]) || 0 : 0;
-        const kapaliAcikAlanVal = kapaliAcikAlanIdx >= 0 ? Number(row[kapaliAcikAlanIdx]) || 0 : 0;
+        const merdivenAlanVal = merdivenAlanIdx >= 0 ? cleanFloat(row[merdivenAlanIdx]) : 0;
+        const ortakAlanVal = ortakAlanIdx >= 0 ? cleanFloat(row[ortakAlanIdx]) : 0;
+        const kapaliAcikAlanVal = kapaliAcikAlanIdx >= 0 ? cleanFloat(row[kapaliAcikAlanIdx]) : 0;
         const daireSahibiVal = daireSahibiIdx >= 0 ? String(row[daireSahibiIdx] || '') : '';
 
         const propId = crypto.randomUUID();
@@ -5169,16 +5210,16 @@ export default function Home() {
 
                   {importType === 'properties' && (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '2rem' }}>
-                      {/* Column 1: Required Fields */}
+                      {/* Column 1: Zorunlu ve Genel Bilgiler */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Zorunlu Alanlar</h4>
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Zorunlu ve Genel Alanlar</h4>
                         
                         <div className="form-group" style={{ marginBottom: 0 }}>
                           <label style={{ fontWeight: 'bold' }}>Parsel Numarası *</label>
                           <select 
                             className="form-control"
                             required
-                            value={columnMap.parsel}
+                            value={columnMap.parsel || ''}
                             onChange={(e) => setColumnMap({ ...columnMap, parsel: e.target.value })}
                           >
                             <option value="">-- Kolon Seçin --</option>
@@ -5191,7 +5232,7 @@ export default function Home() {
                           <select 
                             className="form-control"
                             required
-                            value={columnMap.bag_bol_no}
+                            value={columnMap.bag_bol_no || ''}
                             onChange={(e) => setColumnMap({ ...columnMap, bag_bol_no: e.target.value })}
                           >
                             <option value="">-- Kolon Seçin --</option>
@@ -5199,14 +5240,24 @@ export default function Home() {
                           </select>
                         </div>
 
-                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem', marginTop: '1rem' }}>Daire Özellikleri</h4>
-
                         <div className="form-group" style={{ marginBottom: 0 }}>
                           <label>Kat</label>
                           <select 
                             className="form-control"
-                            value={columnMap.kat}
+                            value={columnMap.kat || ''}
                             onChange={(e) => setColumnMap({ ...columnMap, kat: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Daire Tipi (Oda Sayısı)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.room_count || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, room_count: e.target.value })}
                           >
                             <option value="">-- Eşleştirme Yok (Atla) --</option>
                             {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -5217,8 +5268,20 @@ export default function Home() {
                           <label>Kullanım Amacı (Konut/Mesken/Dükkan)</label>
                           <select 
                             className="form-control"
-                            value={columnMap.kull_amaci}
+                            value={columnMap.kull_amaci || ''}
                             onChange={(e) => setColumnMap({ ...columnMap, kull_amaci: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Fiyat (Fiyat/Bedel)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.price || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, price: e.target.value })}
                           >
                             <option value="">-- Eşleştirme Yok (Atla) --</option>
                             {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -5226,16 +5289,16 @@ export default function Home() {
                         </div>
                       </div>
 
-                      {/* Column 2: Dimensions & Details */}
+                      {/* Column 2: Metrekare ve Alanlar */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Alan & Fiyat Bilgileri</h4>
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Metrekare (Alan) Bilgileri</h4>
 
                         <div className="form-group" style={{ marginBottom: 0 }}>
-                          <label>Daire Tipi (3+1, 2+1 vb.)</label>
+                          <label>Net Alan (m²)</label>
                           <select 
                             className="form-control"
-                            value={columnMap.room_count}
-                            onChange={(e) => setColumnMap({ ...columnMap, room_count: e.target.value })}
+                            value={columnMap.net_alan || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, net_alan: e.target.value })}
                           >
                             <option value="">-- Eşleştirme Yok (Atla) --</option>
                             {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -5243,11 +5306,11 @@ export default function Home() {
                         </div>
 
                         <div className="form-group" style={{ marginBottom: 0 }}>
-                          <label>Fiyat (Fiyat/Bedel Kolonu)</label>
+                          <label>Brüt Alan (m²)</label>
                           <select 
                             className="form-control"
-                            value={columnMap.price}
-                            onChange={(e) => setColumnMap({ ...columnMap, price: e.target.value })}
+                            value={columnMap.brut_alan || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, brut_alan: e.target.value })}
                           >
                             <option value="">-- Eşleştirme Yok (Atla) --</option>
                             {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -5258,7 +5321,7 @@ export default function Home() {
                           <label>Kapalı Alan (m²)</label>
                           <select 
                             className="form-control"
-                            value={columnMap.kapali_alan}
+                            value={columnMap.kapali_alan || ''}
                             onChange={(e) => setColumnMap({ ...columnMap, kapali_alan: e.target.value })}
                           >
                             <option value="">-- Eşleştirme Yok (Atla) --</option>
@@ -5270,8 +5333,49 @@ export default function Home() {
                           <label>Açık Alan (m²)</label>
                           <select 
                             className="form-control"
-                            value={columnMap.acik_alan}
+                            value={columnMap.acik_alan || ''}
                             onChange={(e) => setColumnMap({ ...columnMap, acik_alan: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Kapalı+Açık Alan (m²)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.kapali_acik_alan || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, kapali_acik_alan: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Ortak Alan Payı (m²)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.ortak_alan || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, ortak_alan: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Column 3: Diğer Portföy Bilgileri */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--color-primary)', borderBottom: '1px solid var(--glass-border)', paddingBottom: '0.5rem' }}>Diğer Bilgiler</h4>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Merdiven Alanı (m²)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.merdiven_alan || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, merdiven_alan: e.target.value })}
                           >
                             <option value="">-- Eşleştirme Yok (Atla) --</option>
                             {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
@@ -5282,8 +5386,44 @@ export default function Home() {
                           <label>Daire Sahibi / Malik</label>
                           <select 
                             className="form-control"
-                            value={columnMap.daire_sahibi}
+                            value={columnMap.daire_sahibi || ''}
                             onChange={(e) => setColumnMap({ ...columnMap, daire_sahibi: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Portföy Adı</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.portfoy_adi || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, portfoy_adi: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Portföy Durumu (Kimde)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.portfoy_kimde || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, portfoy_kimde: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Ekstra Özellik / Not</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.extra_ozellik || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, extra_ozellik: e.target.value })}
                           >
                             <option value="">-- Eşleştirme Yok (Atla) --</option>
                             {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
