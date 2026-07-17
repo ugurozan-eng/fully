@@ -235,6 +235,7 @@ export default function Home() {
     warmth_outcome: '',
     appointment_date: '',
     budget: '',
+    rejection_reason: '',
   });
   const [importing, setImporting] = useState<boolean>(false);
   const [importSuccess, setImportSuccess] = useState<boolean>(false);
@@ -311,7 +312,7 @@ export default function Home() {
         const newMap = {
           name: '', phone: '', source: '', property_type: '', room_count: '',
           current_location: '', target_region: '', notes: '', warmth_outcome: '',
-          appointment_date: '', budget: '',
+          appointment_date: '', budget: '', rejection_reason: '',
         };
         
         headers.forEach((h) => {
@@ -326,6 +327,7 @@ export default function Home() {
           else if (lowerH.includes('sonuç') || lowerH.includes('durum') || lowerH.includes('aksiyon')) newMap.warmth_outcome = h;
           else if (lowerH.includes('randevu')) newMap.appointment_date = h;
           else if (lowerH.includes('bütçe') || lowerH.includes('fiyat')) newMap.budget = h;
+          else if (lowerH.includes('red nedeni') || lowerH.includes('rejection') || lowerH.includes('rednedeni') || lowerH.includes('nedenleri')) newMap.rejection_reason = h;
         });
         setColumnMap(newMap);
       } else {
@@ -562,6 +564,7 @@ export default function Home() {
       const warmthIdx = columnMap.warmth_outcome ? excelHeaders.indexOf(columnMap.warmth_outcome) : -1;
       const appDateIdx = columnMap.appointment_date ? excelHeaders.indexOf(columnMap.appointment_date) : -1;
       const budgetIdx = columnMap.budget ? excelHeaders.indexOf(columnMap.budget) : -1;
+      const rejectionReasonIdx = columnMap.rejection_reason ? excelHeaders.indexOf(columnMap.rejection_reason) : -1;
 
       for (const row of excelRows) {
         const nameVal = String(row[nameIdx] || '').trim();
@@ -592,6 +595,7 @@ export default function Home() {
         }
 
         const budgetVal = budgetIdx >= 0 ? Number(String(row[budgetIdx] || '').replace(/\D/g, '')) || 0 : 0;
+        const rejectionReasonVal = rejectionReasonIdx >= 0 ? String(row[rejectionReasonIdx] || '').trim() : '';
         
         // Create lead
         const leadId = crypto.randomUUID();
@@ -606,7 +610,7 @@ export default function Home() {
           purpose: 'Oturumluk',
           customer_question: '',
           lead_status: '',
-          rejection_reason: '',
+          rejection_reason: rejectionReasonVal,
           target_region: targetRegionVal,
           current_location: currentLocationVal,
           budget: budgetVal,
@@ -1645,6 +1649,7 @@ export default function Home() {
     return (
       <div 
         className="glass-panel"
+        onClick={(e) => e.stopPropagation()}
         style={{ 
           position: 'absolute', 
           top: '100%', 
@@ -1878,6 +1883,7 @@ export default function Home() {
         else if (key === 'source') val = lead.source || '-';
         else if (key === 'room_count') val = lead.room_count || '-';
         else if (key === 'lead_status') val = lead.lead_status || '-';
+        else if (key === 'rejection_reason') val = lead.rejection_reason || '-';
         else if (key === 'customer_question') val = lead.customer_question || '-';
         else if (key === 'notes') val = lead.notes || '-';
         else if (key === 'budget') val = lead.budget ? formatNumberWithDots(lead.budget) : '-';
@@ -1903,6 +1909,7 @@ export default function Home() {
         else if (key === 'source') { valA = a.source || ''; valB = b.source || ''; }
         else if (key === 'room_count') { valA = a.room_count || ''; valB = b.room_count || ''; }
         else if (key === 'lead_status') { valA = a.lead_status || ''; valB = b.lead_status || ''; }
+        else if (key === 'rejection_reason') { valA = a.rejection_reason || ''; valB = b.rejection_reason || ''; }
         else if (key === 'customer_question') { valA = a.customer_question || ''; valB = b.customer_question || ''; }
         else if (key === 'notes') { valA = a.notes || ''; valB = b.notes || ''; }
         else if (key === 'budget') { valA = a.budget; valB = b.budget; }
@@ -1947,6 +1954,7 @@ export default function Home() {
         else if (key === 'source') val = lead.source || '-';
         else if (key === 'room_count') val = lead.room_count || '-';
         else if (key === 'lead_status') val = lead.lead_status || '-';
+        else if (key === 'rejection_reason') val = lead.rejection_reason || '-';
         else if (key === 'customer_question') val = lead.customer_question || '-';
         else if (key === 'notes') val = lead.notes || '-';
         else if (key === 'budget') val = lead.budget ? formatNumberWithDots(lead.budget) : '-';
@@ -1972,6 +1980,7 @@ export default function Home() {
         else if (key === 'source') { valA = a.source || ''; valB = b.source || ''; }
         else if (key === 'room_count') { valA = a.room_count || ''; valB = b.room_count || ''; }
         else if (key === 'lead_status') { valA = a.lead_status || ''; valB = b.lead_status || ''; }
+        else if (key === 'rejection_reason') { valA = a.rejection_reason || ''; valB = b.rejection_reason || ''; }
         else if (key === 'customer_question') { valA = a.customer_question || ''; valB = b.customer_question || ''; }
         else if (key === 'notes') { valA = a.notes || ''; valB = b.notes || ''; }
         else if (key === 'budget') { valA = a.budget; valB = b.budget; }
@@ -2075,6 +2084,7 @@ export default function Home() {
         "Kanal": lead.source || '',
         "Oda Talebi": lead.room_count || '',
         "Mevcut Durum": lead.lead_status || '',
+        "Red Nedeni": lead.rejection_reason || '',
         "Müşteri Sorusu": lead.customer_question || '',
         "Son Not": lead.notes || '',
         "Bütçe": lead.budget || 0,
@@ -2119,7 +2129,8 @@ export default function Home() {
           "Not": "Deniz manzaralı daire arıyor.",
           "Durum/Aksiyon": "Sıcak",
           "Randevu Tarihi": "15.07.2026",
-          "Bütçe": "5500000"
+          "Bütçe": "5500000",
+          "Red Nedenleri": ""
         },
         {
           "İsim Soyisim": "Ayşe Kaya",
@@ -2129,9 +2140,10 @@ export default function Home() {
           "Yaşadığı Yer": "Ankara",
           "Bölge/Konum": "Pendik",
           "Not": "Yatırımlık bakıyor.",
-          "Durum/Aksiyon": "Sıcak",
+          "Durum/Aksiyon": "Anketten Red",
           "Randevu Tarihi": "",
-          "Bütçe": "4200000"
+          "Bütçe": "4200000",
+          "Red Nedenleri": "Bütçe Aşımı Nedeniyle Red"
         }
       ];
     } else {
@@ -3787,7 +3799,7 @@ export default function Home() {
 
                       return (
                         <div style={{ overflowX: 'auto' }}>
-                          <table className="crm-table" style={{ width: '100%', minWidth: '1700px', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <table className="crm-table" style={{ width: '100%', minWidth: '1850px', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                             <thead>
                               <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
                                 <th 
@@ -3869,6 +3881,16 @@ export default function Home() {
                                     <Filter size={12} style={{ color: dbFilters['lead_status'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['lead_status'] ? 1 : 0.5 }} />
                                   </div>
                                   {renderFilterPopover('db', 'lead_status', 'Mevcut Durum', leads, l => l.lead_status || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '150px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'db-rejection_reason' ? null : 'db-rejection_reason')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Red Nedeni</span>
+                                    <Filter size={12} style={{ color: dbFilters['rejection_reason'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: dbFilters['rejection_reason'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('db', 'rejection_reason', 'Red Nedeni', leads, l => l.rejection_reason || '-')}
                                 </th>
                                 <th 
                                   style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '150px', position: 'relative', cursor: 'pointer', userSelect: 'none' }}
@@ -4118,6 +4140,44 @@ export default function Home() {
                                     />
                                   </td>
                                   <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <select
+                                      value={lead.rejection_reason || ''}
+                                      onChange={async (e) => {
+                                        await handleInlineLeadUpdate(lead, 'rejection_reason', e.target.value);
+                                      }}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.03)',
+                                        border: '1px solid var(--glass-border)',
+                                        color: '#fff',
+                                        width: '100%',
+                                        padding: '0.25rem 0.4rem',
+                                        borderRadius: '4px',
+                                        outline: 'none',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      <option value="">-</option>
+                                      <option value="Mimariyi Beğenmediğinden">Mimariyi Beğenmediğinden</option>
+                                      <option value="Farklı Proje Nedeniyle Red">Farklı Proje Nedeniyle Red</option>
+                                      <option value="Bütçe Aşımı Nedeniyle Red">Bütçe Aşımı Nedeniyle Red</option>
+                                      <option value="Denize Uzaklık Nedeniyle Red">Denize Uzaklık Nedeniyle Red</option>
+                                      <option value="Yatırımdan Vazgeçti">Yatırımdan Vazgeçti</option>
+                                      <option value="Ebeveyn Banyosu Olmaması">Ebeveyn Banyosu Olmaması</option>
+                                      <option value="Sebep belirtmedi">Sebep belirtmedi</option>
+                                      {lead.rejection_reason && ![
+                                        'Mimariyi Beğenmediğinden',
+                                        'Farklı Proje Nedeniyle Red',
+                                        'Bütçe Aşımı Nedeniyle Red',
+                                        'Denize Uzaklık Nedeniyle Red',
+                                        'Yatırımdan Vazgeçti',
+                                        'Ebeveyn Banyosu Olmaması',
+                                        'Sebep belirtmedi'
+                                      ].includes(lead.rejection_reason) && (
+                                        <option value={lead.rejection_reason}>{lead.rejection_reason}</option>
+                                      )}
+                                    </select>
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
                                     <input
                                       type="text"
                                       defaultValue={lead.customer_question || ''}
@@ -4332,7 +4392,7 @@ export default function Home() {
                         {reportFilteredLeads.length === 0 ? (
                           <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>Bu kriterlerde müşteri kaydı bulunamadı.</div>
                         ) : (
-                          <table className="crm-table" style={{ width: '100%', minWidth: '1700px', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <table className="crm-table" style={{ width: '100%', minWidth: '1850px', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                             <thead>
                               <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--glass-border)' }}>
                                 <th 
@@ -4414,6 +4474,16 @@ export default function Home() {
                                     <Filter size={12} style={{ color: reportFilters['lead_status'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['lead_status'] ? 1 : 0.5 }} />
                                   </div>
                                   {renderFilterPopover('report', 'lead_status', 'Mevcut Durum', reportLeads || leads, l => l.lead_status || '-')}
+                                </th>
+                                <th 
+                                  style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '150px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-rejection_reason' ? 1000 : 'auto' }}
+                                  onClick={() => setOpenPopoverId(openPopoverId === 'report-rejection_reason' ? null : 'report-rejection_reason')}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                    <span>Red Nedeni</span>
+                                    <Filter size={12} style={{ color: reportFilters['rejection_reason'] ? 'var(--color-primary)' : 'var(--text-secondary)', opacity: reportFilters['rejection_reason'] ? 1 : 0.5 }} />
+                                  </div>
+                                  {renderFilterPopover('report', 'rejection_reason', 'Red Nedeni', reportLeads || leads, l => l.rejection_reason || '-')}
                                 </th>
                                 <th 
                                   style={{ padding: '0.75rem 0.5rem', textAlign: 'left', width: '150px', position: 'relative', cursor: 'pointer', userSelect: 'none', zIndex: openPopoverId === 'report-customer_question' ? 1000 : 'auto' }}
@@ -4673,6 +4743,45 @@ export default function Home() {
                                         transition: 'border-color 0.15s, background-color 0.15s'
                                       }}
                                     />
+                                  </td>
+                                  <td style={{ padding: '0.35rem 0.5rem' }}>
+                                    <select
+                                      value={lead.rejection_reason || ''}
+                                      onChange={async (e) => {
+                                        const val = e.target.value;
+                                        await handleInlineLeadUpdate(lead, 'rejection_reason', val);
+                                      }}
+                                      style={{
+                                        background: 'rgba(255,255,255,0.04)',
+                                        border: '1px solid var(--glass-border)',
+                                        color: '#fff',
+                                        borderRadius: '4px',
+                                        padding: '0.25rem 0.4rem',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                        width: '100%'
+                                      }}
+                                    >
+                                      <option value="" style={{ background: '#120f24' }}>-</option>
+                                      <option value="Mimariyi Beğenmediğinden" style={{ background: '#120f24' }}>Mimariyi Beğenmediğinden</option>
+                                      <option value="Farklı Proje Nedeniyle Red" style={{ background: '#120f24' }}>Farklı Proje Nedeniyle Red</option>
+                                      <option value="Bütçe Aşımı Nedeniyle Red" style={{ background: '#120f24' }}>Bütçe Aşımı Nedeniyle Red</option>
+                                      <option value="Denize Uzaklık Nedeniyle Red" style={{ background: '#120f24' }}>Denize Uzaklık Nedeniyle Red</option>
+                                      <option value="Yatırımdan Vazgeçti" style={{ background: '#120f24' }}>Yatırımdan Vazgeçti</option>
+                                      <option value="Ebeveyn Banyosu Olmaması" style={{ background: '#120f24' }}>Ebeveyn Banyosu Olmaması</option>
+                                      <option value="Sebep belirtmedi" style={{ background: '#120f24' }}>Sebep belirtmedi</option>
+                                      {lead.rejection_reason && ![
+                                        'Mimariyi Beğenmediğinden',
+                                        'Farklı Proje Nedeniyle Red',
+                                        'Bütçe Aşımı Nedeniyle Red',
+                                        'Denize Uzaklık Nedeniyle Red',
+                                        'Yatırımdan Vazgeçti',
+                                        'Ebeveyn Banyosu Olmaması',
+                                        'Sebep belirtmedi'
+                                      ].includes(lead.rejection_reason) && (
+                                        <option value={lead.rejection_reason} style={{ background: '#120f24' }}>{lead.rejection_reason}</option>
+                                      )}
+                                    </select>
                                   </td>
                                   <td style={{ padding: '0.35rem 0.5rem' }}>
                                     <input
@@ -5550,6 +5659,18 @@ export default function Home() {
                             className="form-control"
                             value={columnMap.warmth_outcome}
                             onChange={(e) => setColumnMap({ ...columnMap, warmth_outcome: e.target.value })}
+                          >
+                            <option value="">-- Eşleştirme Yok (Atla) --</option>
+                            {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                          </select>
+                        </div>
+
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label>Red Nedeni (Eğer Anketten Red ise)</label>
+                          <select 
+                            className="form-control"
+                            value={columnMap.rejection_reason || ''}
+                            onChange={(e) => setColumnMap({ ...columnMap, rejection_reason: e.target.value })}
                           >
                             <option value="">-- Eşleştirme Yok (Atla) --</option>
                             {excelHeaders.map(h => <option key={h} value={h}>{h}</option>)}
